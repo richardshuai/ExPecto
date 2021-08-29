@@ -15,8 +15,10 @@ import argparse
 import xgboost as xgb
 import pandas as pd
 import numpy as np
-from scipy.stats import spearmanr
-import h5py
+from scipy.stats import spearmanr, pearsonr
+from sklearn.metrics import r2_score
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--targetIndex', action="store",
@@ -87,8 +89,9 @@ evallist = [(dtest, 'eval'), (dtrain, 'train')]
 num_round = args.num_round
 bst = xgb.train(param, dtrain, num_round, evallist)
 ypred = bst.predict(dtest)
-print(spearmanr(ypred, np.asarray(
-     np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount))))
+ytrue = np.asarray(np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount))
+
+print(spearmanr(ypred, ytrue))
 if args.evalFile != '':
     evaldf = pd.DataFrame({'pred':ypred,'target':np.asarray(
      np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount))})
@@ -97,3 +100,27 @@ bst.save_model(args.output + args.filterStr + '.pseudocount' + str(args.pseudoco
                str(args.num_round) + '.basescore' + str(args.base_score) + '.' + geneexp.columns[args.targetIndex] + '.save')
 bst.dump_model(args.output + args.filterStr + '.pseudocount' + str(args.pseudocount) + '.lambda' + str(args.l2) + '.round' +
                str(args.num_round) + '.basescore' + str(args.base_score) + '.' + geneexp.columns[args.targetIndex] + '.dump')
+
+# Plots
+def plot_preds(ytrue, ypred, out_dir):
+    print(spearmanr(ytrue, ypred))
+
+    fig = sns.scatterplot(x=ytrue, y=ypred, color="black", alpha=0.3, s=20)
+    plt.plot([0, 1], [0, 1], c='orange', transform=fig.transAxes)
+    plt.xlim(-0.25, np.max(ytrue))
+    plt.ylim(-0.25, np.max(ytrue))
+    plt.ylabel('Predictions (log2 RPM)')
+    plt.xlabel('Labels (log2 RPM)')
+    train_pearsonr, _ = pearsonr(ytrue, ypred)
+    train_r2 = r2_score(y_true=ytrue, y_pred=ypred)
+    plt.title(f'PearsonR: {train_pearsonr:.3f}, R2: {train_r2:.3f}')
+    plt.savefig(out_dir, dpi=300)
+
+    plt.show()
+    plt.close('all')
+
+plot_preds(ytrue, ypred)
+
+ypred_train = bst.predict(dtrain)
+ytrue_train = np.asarray(np.log(geneexp.iloc[trainind * filt, args.targetIndex] + args.pseudocount))
+plot_preds(ytrue_train, ypred_train)
