@@ -19,6 +19,7 @@ from scipy.stats import spearmanr, pearsonr
 from sklearn.metrics import r2_score
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--targetIndex', action="store",
@@ -45,6 +46,7 @@ parser.add_argument('--base_score', action="store",
                     dest="base_score", type=float, default=2)
 parser.add_argument('--threads', action="store",
                     dest="threads", type=int, default=16)
+parser.add_argument('--plots_out_dir', type=str, default='plots')
 
 args = parser.parse_args()
 
@@ -119,8 +121,9 @@ def plot_preds(ytrue, ypred, out_dir):
     plt.show()
     plt.close('all')
 
-plot_preds(ytrue, ypred)
 
+os.makedirs(args.plots_out_dir, exist_ok=True)
+plot_preds(ytrue, ypred, f'{args.plots_out_dir}/test_plots.png')
 ypred_train = bst.predict(dtrain)
 ytrue_train = np.asarray(np.log(geneexp.iloc[trainind * filt, args.targetIndex] + args.pseudocount))
-plot_preds(ytrue_train, ypred_train)
+plot_preds(ytrue_train, ypred_train, f'{args.plots_out_dir}/train_plots.png')
