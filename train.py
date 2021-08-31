@@ -109,10 +109,10 @@ def plot_preds(ytrue, ypred, out_dir):
 
     fig = sns.scatterplot(x=ytrue, y=ypred, color="black", alpha=0.3, s=20)
     plt.plot([0, 1], [0, 1], c='orange', transform=fig.transAxes)
-    plt.xlim(-0.25, np.max(ytrue))
-    plt.ylim(-0.25, np.max(ytrue))
-    plt.ylabel('Predictions (log2 RPM)')
-    plt.xlabel('Labels (log2 RPM)')
+    plt.xlim(np.min(ytrue), np.max(ytrue))
+    plt.ylim(np.min(ytrue), np.max(ytrue))
+    plt.ylabel('Predictions (log RPM)')
+    plt.xlabel('Labels (log RPM)')
     train_pearsonr, _ = pearsonr(ytrue, ypred)
     train_r2 = r2_score(y_true=ytrue, y_pred=ypred)
     plt.title(f'PearsonR: {train_pearsonr:.3f}, R2: {train_r2:.3f}')
@@ -124,6 +124,8 @@ def plot_preds(ytrue, ypred, out_dir):
 
 os.makedirs(args.plots_out_dir, exist_ok=True)
 plot_preds(ytrue, ypred, f'{args.plots_out_dir}/test_plots.png')
+
+
 ypred_train = bst.predict(dtrain)
 ytrue_train = np.asarray(np.log(geneexp.iloc[trainind * filt, args.targetIndex] + args.pseudocount))
 plot_preds(ytrue_train, ypred_train, f'{args.plots_out_dir}/train_plots.png')
