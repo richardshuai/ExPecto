@@ -10,7 +10,7 @@ def main():
                       default='/home/rshuai/research/ni-lab/analysis/basenji2/pseudobulk_rna/Wilson_rawcounts.txt')
     parser.add_argument('--rank_match_file', dest='rank_match_file', default=None,
                         help='If provided, force counts to match this file based on rank')
-    parser.add_argument('-i', dest='i', default=0, help='Index of column to rank match to, 0-indexed')
+    parser.add_argument('-i', dest='i', type=int, default=0, help='Index of column to rank match to, 0-indexed')
     parser.add_argument('--out_file', dest='out_file', type=str,
                         default='resources/geneanno.exp_kidney.csv')
     args = parser.parse_args()
@@ -24,6 +24,7 @@ def main():
 
     if args.rank_match_file is not None:
         geneanno_to_match = pd.read_csv(args.rank_match_file, index_col=0)
+        print(f"Matching to {geneanno_to_match.columns[args.i]}...")
         nan_mask = np.any(df_out.isnull(), axis=1)
         col_to_match = geneanno_to_match.iloc[:, args.i].reset_index(drop=True)
         # Only use genes present in the kidney cell types for matching

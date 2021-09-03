@@ -47,6 +47,9 @@ parser.add_argument('--base_score', action="store",
 parser.add_argument('--threads', action="store",
                     dest="threads", type=int, default=16)
 parser.add_argument('--plots_out_dir', type=str, default='plots')
+parser.add_argument('--match_kidney_data_nans', action="store_true",
+                    dest="match_kidney_data_nans", default=False,
+                    help="If true, match nans of kidney data.")
 
 args = parser.parse_args()
 
@@ -67,6 +70,11 @@ geneexp = pd.read_csv(args.expFile)
 filt = filt * \
     np.isfinite(np.asarray(
         np.log(geneexp.iloc[:, args.targetIndex] + args.pseudocount)))
+
+if args.match_kidney_data_nans:
+    print("Using only genes found in kidney data...")
+    kidney_exp_df = pd.read_csv('./resources/geneanno.exp_kidney.csv', index_col=0)
+    filt = filt * ~np.array(np.any(kidney_exp_df.isnull(), axis=1))
 
 # training
 
