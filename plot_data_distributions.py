@@ -14,6 +14,9 @@ def main():
     parser.add_argument('--pseudocount', action="store",
                         dest="pseudocount", type=float, default=0.0001)
     parser.add_argument('--out_dir', type=str, default='data_distribution_plots')
+    parser.add_argument('--kidney_genes_only', action="store_true",
+                        dest="kidney_genes_only", default=False,
+                        help="If true, only use genes in our kidney data.")
     args = parser.parse_args()
 
     # Plot kidney data distributions
@@ -39,11 +42,14 @@ def main():
     os.makedirs(plot_dir, exist_ok=True)
     exp_df = pd.read_csv(args.exp_file, index_col=0).reset_index(drop=True)
     exp_df = np.log(exp_df + args.pseudocount)
+    if args.kidney_genes_only:
+        print("Only using genes found in our kidney data")
+        exp_df = exp_df[~nan_mask]
     xmin, xmax = np.min(np.array(exp_df)), np.max(np.array(exp_df))
     bins = np.linspace(xmin, xmax, num=50)
-    for i, cell_type in enumerate(exp_df.iloc[:, :10]):
-        if i == 10:
-            break
+    for i, cell_type in enumerate(exp_df):
+        if 'kidney' not in cell_type.lower():
+            continue
         plt.figure()
         plt.hist(exp_df.loc[:, cell_type], bins=bins)
         plt.title(f'{cell_type}')
@@ -55,10 +61,18 @@ def main():
     i_e = 0
     expecto_cell_type = exp_df.columns[i_e]
 
-    plot_kidney_vs_expecto(x_kidney=kidney_exp_df[kidney_cell_type], y_expecto=exp_df[~nan_mask][expecto_cell_type],
-                           xlabel=f'{kidney_cell_type} expression, log(RPKM)',
-                           ylabel=f'{expecto_cell_type} expression, log(RPKM)',
-                           out_dir=f'{args.out_dir}/scatter_{kidney_cell_type}_vs_{expecto_cell_type}.png')
+    if args.kidney_genes_only:
+        # Mask is already applied to exp_df
+        plot_kidney_vs_expecto(x_kidney=kidney_exp_df[kidney_cell_type], y_expecto=exp_df[expecto_cell_type],
+                               xlabel=f'{kidney_cell_type} expression, log(RPKM)',
+                               ylabel=f'{expecto_cell_type} expression, log(RPKM)',
+                               out_dir=f'{args.out_dir}/scatter_{kidney_cell_type}_vs_{expecto_cell_type}.png')
+
+    else:
+        plot_kidney_vs_expecto(x_kidney=kidney_exp_df[kidney_cell_type], y_expecto=exp_df[~nan_mask][expecto_cell_type],
+                               xlabel=f'{kidney_cell_type} expression, log(RPKM)',
+                               ylabel=f'{expecto_cell_type} expression, log(RPKM)',
+                               out_dir=f'{args.out_dir}/scatter_{kidney_cell_type}_vs_{expecto_cell_type}.png')
 
 
 # Plots

@@ -47,11 +47,14 @@ parser.add_argument('--base_score', action="store",
 parser.add_argument('--threads', action="store",
                     dest="threads", type=int, default=16)
 parser.add_argument('--plots_out_dir', type=str, default='plots')
-parser.add_argument('--match_kidney_data_nans', action="store_true",
-                    dest="match_kidney_data_nans", default=False,
-                    help="If true, match nans of kidney data.")
+parser.add_argument('--kidney_genes_only', action="store_true",
+                    dest="kidney_genes_only", default=False,
+                    help="If true, only use genes in our kidney data.")
 
 args = parser.parse_args()
+
+# Make model output dir
+os.makedirs(os.path.dirname(args.output), exist_ok=True)
 
 # read resources
 Xreducedall = np.load(args.inputFile)
@@ -67,12 +70,14 @@ else:
     raise ValueError('filterStr has to be one of all, pc, and lincRNA')
 
 geneexp = pd.read_csv(args.expFile)
+print(f"Cell type: {geneexp.columns[args.targetIndex]}")
+
 filt = filt * \
     np.isfinite(np.asarray(
         np.log(geneexp.iloc[:, args.targetIndex] + args.pseudocount)))
 
-if args.match_kidney_data_nans:
-    print("Using only genes found in kidney data...")
+if args.kidney_genes_only:
+    print("Using only genes found in our kidney data...")
     kidney_exp_df = pd.read_csv('./resources/geneanno.exp_kidney.csv', index_col=0)
     filt = filt * ~np.array(np.any(kidney_exp_df.isnull(), axis=1))
 
