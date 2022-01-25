@@ -50,6 +50,10 @@ parser.add_argument('--plots_out_dir', type=str, default='plots')
 parser.add_argument('--kidney_genes_only', action="store_true",
                     dest="kidney_genes_only", default=False,
                     help="If true, only use genes in our kidney data.")
+parser.add_argument('--match_with_basenji2', action='store_true',
+                    dest='match_with_basenji2', default=False,
+                    help='If true, only use genes in our cultured primary tubule data that are included in the Basenji2 '
+                         'gene predictor')
 
 args = parser.parse_args()
 
@@ -81,8 +85,13 @@ if args.kidney_genes_only:
     kidney_exp_df = pd.read_csv('./resources/geneanno.exp_kidney.csv', index_col=0)
     filt = filt * ~np.array(np.any(kidney_exp_df.isnull(), axis=1))
 
-# training
+if args.match_with_basenji2:
+    print("Using only genes found in our cultured primary tubule data...")
+    cultured_counts_file = '/home/rshuai/research/ni-lab/analysis/basenji2/tss/cultured_primary_tubule/representative_tss_top/tss.tsv'
+    cultured_counts_df = pd.read_csv(cultured_counts_file, sep='\t', index_col=0)
+    filt = filt * (geneanno['id'].isin(cultured_counts_df['ens_id']).values)
 
+# training
 trainind = np.asarray(geneanno['seqnames'] != 'chrX') * np.asarray(
     geneanno['seqnames'] != 'chrY') * np.asarray(geneanno['seqnames'] != 'chr8')
 testind = np.asarray(geneanno['seqnames'] == 'chr8')
