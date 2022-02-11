@@ -1,2 +1,4 @@
 output_dir
 data
+*.DS_Store
+*.idea

@@ -21,10 +21,13 @@ def main():
     counts_df['cultured_PT'] = np.exp2(counts_df['logrpm']) - 0.1  # from log2(RPM + 0.1) back to RPM
     counts_df = counts_df['cultured_PT']
 
-    df_merged = geneanno.merge(counts_df, how='left', left_on='symbol', right_index=True, validate='m:1')
+    # df_merged = geneanno.merge(counts_df, how='left', left_on='symbol', right_index=True, validate='m:1')
     # TODO: Deal with the duplicate gene symbols
-    duplicated = geneanno[geneanno["symbol"].duplicated(keep="first")]
-    print(f'Number of duplicated genes: {len(duplicated)}')
+    # duplicated = geneanno[geneanno["symbol"].duplicated(keep="first")]
+    # print(f'Number of duplicated genes: {len(duplicated)}')
+
+    # Using Ensembl IDs -- no duplicates
+    df_merged = geneanno.merge(counts_df, how='left', left_index=True, right_index=True, validate='1:1')
 
     df_out = df_merged.loc[:, ['cultured_PT']]
     df_out.index = range(1, len(df_out.index) + 1)
