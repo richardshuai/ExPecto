@@ -2,3 +2,4 @@ output_dir
 data
 *.DS_Store
 *.idea
+resources/deepsea.beluga.pth
