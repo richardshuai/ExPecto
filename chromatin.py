@@ -17,9 +17,14 @@ from torch import nn
 import numpy as np
 import pandas as pd
 import h5py
+import os
+from liftover import get_lifter
+
 
 parser = argparse.ArgumentParser(description='Predict variant chromatin effects')
 parser.add_argument('inputfile', type=str, help='Input file in vcf format')
+parser.add_argument('--hg38', action='store_true', help='Set flag if variants in VCF are given in hg38 format. '
+                                                        'Variants will be lifted over to hg19.')
 parser.add_argument('--maxshift', action="store",
                     dest="maxshift", type=int, default=800,
                     help='Maximum shift distance for computing nearby effects')
@@ -27,10 +32,17 @@ parser.add_argument('--inputsize', action="store", dest="inputsize", type=int,
                     default=2000, help="The input sequence window size for neural network")
 parser.add_argument('--batchsize', action="store", dest="batchsize",
                     type=int, default=32, help="Batch size for neural network predictions.")
+parser.add_argument('--output_dir', action="store", dest="output_dir",
+                    type=str, default='chromatin_out', help="Output directory for predictions.")
 parser.add_argument('--cuda', action='store_true')
 args = parser.parse_args()
 
 genome = pyfasta.Fasta('./resources/hg19.fa')
+os.makedirs(args.output_dir, exist_ok=True)
+
+
+if args.hg38:
+    converter = get_lifter('hg38', 'hg19')  # need to liftover from hg38 to hg19
 
 class LambdaBase(nn.Sequential):
     def __init__(self, fn, *args):
@@ -98,6 +110,18 @@ maxshift = args.maxshift
 inputsize = args.inputsize
 batchSize = args.batchsize
 windowsize = inputsize + 100
+
+
+def liftover_to_hg19(row):
+    chrom_hg38, pos_hg38 = row[0], row[1]
+    hg19_coords = converter.convert_coordinate(chrom_hg38, pos_hg38)
+
+    if len(hg19_coords) == 0:
+        assert False, f'Failed to lift over hg38 variant at {chrom_hg38}, bp {pos_hg38} to hg19'
+    assert len(hg19_coords) == 1, f"hg38 to hg19 conversion returned multiple entries for {chrom_hg38}, bp {pos_hg38}"
+    chrom_hg19, pos_hg19, _ = hg19_coords[0]
+    row[0], row[1] = chrom_hg19, pos_hg19
+    return row
 
 
 def encodeSeqs(seqs, inputsize=2000):
@@ -174,6 +198,10 @@ def fetchSeqs(chr, pos, ref, alt, shift=0, inputsize=2000):
 
 vcf = pd.read_csv(inputfile, sep='\t', header=None, comment='#')
 
+# lift over to hg19 if necessary
+if args.hg38:
+    vcf = vcf.apply(liftover_to_hg19, axis=1)
+
 # standardize
 vcf.iloc[:, 0] = 'chr' + vcf.iloc[:, 0].map(str).str.replace('chr', '')
 vcf = vcf[vcf.iloc[:, 0].isin(CHRS)]
@@ -223,6 +251,16 @@ for shift in [0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, ma
     #alt_preds = np.vstack(map(lambda x: model.forward(x).numpy(),
     #        np.array_split(alt_encoded, int(1 + len(altseqs) / batchSize))))
     diff = alt_preds - ref_preds
-    f = h5py.File(inputfile + '.shift_' + str(shift) + '.diff.h5', 'w')
-    f.create_dataset('pred', data=diff)
+    f = h5py.File(f'{args.output_dir}/snps.shift_{str(shift)}.diff.h5', 'w')
+    f.create_dataset('diff', data=diff)
+    f.create_dataset('ref', data=ref_preds)
+    f.create_dataset('alt', data=alt_preds)
     f.close()
+
+    # Preserve vcf file with lifted coordinates
+    vcf_file_hg19 = f'{args.output_dir}/snps_hg19.vcf'
+    vcf_file_hg19_out = open(vcf_file_hg19, 'w')
+    print('##fileformat=VCFv4.3', file=vcf_file_hg19_out)
+    print('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO', file=vcf_file_hg19_out)
+    vcf_file_hg19_out.close()
+    vcf.to_csv(vcf_file_hg19, sep='\t', header=False, index=False, mode='a')

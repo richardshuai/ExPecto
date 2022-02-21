@@ -18,6 +18,8 @@ import pandas as pd
 import numpy as np
 import h5py
 from six.moves import reduce
+import os
+
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--coorFile', action="store", dest="coorFile")
@@ -29,7 +31,7 @@ parser.add_argument('--modelList', action="store", dest="modelList",
                     help="A list of paths of binary xgboost model files (if end with .list) or a combined model file (if ends with .csv).")
 parser.add_argument('--nfeatures', action="store",
                     dest="nfeatures", type=int, default=2002)
-parser.add_argument('--output', action="store", dest="output")
+parser.add_argument('-o', action="store", dest="out_dir")
 parser.add_argument('--fixeddist', action="store",
                     dest="fixeddist", default=0, type=int)
 parser.add_argument('--maxshift', action="store",
@@ -45,8 +47,10 @@ parser.add_argument('--threads', action="store", dest="threads",
                     type=int, default=16, help="Number of threads.")
 args = parser.parse_args()
 
+os.makedirs(args.out_dir, exist_ok=True)
 
-def compute_effects(snpeffects, snpdists, snpstrands, all_models, maxshift=800, nfeatures=2002, batchSize=500,old_format=False):
+
+def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_models, maxshift=800, nfeatures=2002, batchSize=500,old_format=False):
     """Compute expression effects (log fold-change).
 
     Args:
@@ -87,14 +91,23 @@ def compute_effects(snpeffects, snpdists, snpstrands, all_models, maxshift=800, 
            ) / 200.0))) * ((snpdists + dist * ((snpstrands == '+') * 2 - 1)) >= 0)
      ]).T for dist in [0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, maxshift + 1, 200))]
     n_snps = len(snpdists)
-    effect = np.zeros((n_snps, len(all_models)))
 
+    ref = np.zeros((n_snps, len(all_models)))
+    alt = np.zeros((n_snps, len(all_models)))
+    effect = np.zeros((n_snps, len(all_models)))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
         print("Processing " + str(i) + "th batch of "+str(batchSize))
         # compute gene expression change with models
         diff = reduce(lambda x, y: x + y, [np.tile(np.asarray(snpeffects[j][i * batchSize:(i + 1) * batchSize, :]), 10)
                                  * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
+
+        ref_features =  reduce(lambda x, y: x + y, [np.tile(np.asarray(ref_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
+                                 * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
+
+        alt_features =  reduce(lambda x, y: x + y, [np.tile(np.asarray(alt_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
+                                 * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
+
         if old_format:
             # backward compatibility
             diff = np.concatenate([np.zeros((diff.shape[0], 10, 1)), diff.reshape(
@@ -102,11 +115,17 @@ def compute_effects(snpeffects, snpdists, snpstrands, all_models, maxshift=800, 
         dtest_ref = xgb.DMatrix(diff * 0)
         dtest_alt = xgb.DMatrix(diff)
 
-        for j in range(len(all_models)):
-            effect[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_alt) - \
-                            all_models[j].predict(dtest_ref)
+        dtest_ref_preds = xgb.DMatrix(ref_features)
+        dtest_alt_preds = xgb.DMatrix(alt_features)
 
-    return effect
+        for j in range(len(all_models)):
+            effect[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_ref) - \
+                                                           all_models[j].predict(dtest_alt)
+
+            ref[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_ref_preds)
+            alt[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_alt_preds)
+
+    return effect, ref, alt
 
 #load resources
 modelList = pd.read_csv(args.modelList,sep='\t',header=0)
@@ -126,21 +145,36 @@ else:
 #load input data
 maxshift = int(args.maxshift)
 snpEffects = []
+ref_preds = []
+alt_preds = []
 for shift in [str(n) for n in [0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, maxshift + 1, 200))]:
-    h5f = h5py.File(args.snpEffectFilePattern.replace(
-        'SHIFT', shift), 'r')['/pred']
+    h5f_diff = h5py.File(args.snpEffectFilePattern.replace(
+        'SHIFT', shift), 'r')['diff']
+
+    h5f_ref = h5py.File(args.snpEffectFilePattern.replace(
+        'SHIFT', shift), 'r')['ref']
+
+    h5f_alt = h5py.File(args.snpEffectFilePattern.replace(
+        'SHIFT', shift), 'r')['alt']
 
     if args.splitFlag:
         index_start = int((args.splitIndex - 1) *
-                          np.ceil(float(h5f.shape[0] / 2) / args.splitFold))
+                          np.ceil(float(h5f_diff.shape[0] / 2) / args.splitFold))
         index_end = int(np.minimum(
-            (args.splitIndex) * np.ceil(float(h5f.shape[0] / 2) / args.splitFold), (h5f.shape[0] / 2)))
+            (args.splitIndex) * np.ceil(float(h5f_diff.shape[0] / 2) / args.splitFold), (h5f_diff.shape[0] / 2)))
     else:
         index_start = 0
-        index_end = int(h5f.shape[0] / 2)
+        index_end = int(h5f_diff.shape[0] / 2)
 
-    snp_temp = (np.asarray(h5f[index_start:index_end,:])+ np.asarray(h5f[index_start+int(h5f.shape[0]/2):index_end+int(h5f.shape[0]/2),:]))/2.0
+    snp_temp = (np.asarray(h5f_diff[index_start:index_end, :]) + np.asarray(h5f_diff[index_start + int(h5f_diff.shape[0] / 2):index_end + int(h5f_diff.shape[0] / 2), :])) / 2.0
+    snp_temp_ref = (np.asarray(h5f_ref[index_start:index_end, :]) + np.asarray(
+        h5f_ref[index_start + int(h5f_ref.shape[0] / 2):index_end + int(h5f_ref.shape[0] / 2), :])) / 2.0
+    snp_temp_alt = (np.asarray(h5f_alt[index_start:index_end, :]) + np.asarray(
+        h5f_alt[index_start + int(h5f_alt.shape[0] / 2):index_end + int(h5f_alt.shape[0] / 2), :])) / 2.0
+
     snpEffects.append(snp_temp)
+    ref_preds.append(snp_temp_ref)
+    alt_preds.append(snp_temp_alt)
 
 
 coor = pd.read_csv(args.coorFile,sep='\t',header=None,comment='#')
@@ -160,7 +194,7 @@ genename = np.asarray(gene.iloc[geneinds,-2])
 strand= np.asarray(gene.iloc[geneinds,-3])
 
 #comptue expression effects
-snpExpEffects = compute_effects(snpEffects, \
+snpExpEffects, ref, alt = compute_effects(snpEffects, ref_preds, alt_preds, \
                                 dist, strand,\
                                 models, maxshift=maxshift, nfeatures=args.nfeatures,
                                 batchSize = args.batchSize, old_format = old_format)
@@ -169,5 +203,32 @@ snpExpEffects_df = coor
 snpExpEffects_df['dist'] = dist
 snpExpEffects_df['gene'] = genename
 snpExpEffects_df['strand'] = strand
-snpExpEffects_df=pd.concat([snpExpEffects_df.reset_index(),pd.DataFrame(snpExpEffects, columns = modelList.iloc[:,1])],axis=1,ignore_index =False)
-snpExpEffects_df.to_csv(args.output, header = True)
+# snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
+#                               pd.DataFrame(ref, columns=list(map(lambda x: x + '_REF', modelList.iloc[:, 1]))),
+#                               pd.DataFrame(alt, columns=list(map(lambda x: x + '_ALT', modelList.iloc[:, 1]))),
+#                               pd.DataFrame(snpExpEffects, columns=list(map(lambda x: x + '_SED', modelList.iloc[:, 1])))
+#                               ],
+#                              axis=1,
+#                              ignore_index=False)
+
+snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
+                              pd.DataFrame(ref, columns=['REF']),
+                              pd.DataFrame(alt, columns=['ALT']),
+                              # pd.DataFrame(snpExpEffects, columns=['SED'])
+                              pd.DataFrame(alt - ref, columns=['SED'])
+                              ],
+                             axis=1,
+                             ignore_index=False)
+snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
+
+# Sort by magnitude of SNP effects
+snpExpEffects_df['SED_MAGNITUDES'] = np.abs(snpExpEffects_df['SED'])
+snpExpEffects_df_sorted = snpExpEffects_df.sort_values(by='SED_MAGNITUDES', axis=0, ascending=False)
+snpExpEffects_df_sorted = snpExpEffects_df_sorted.drop('SED_MAGNITUDES', axis=1)
+snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_magnitude.csv', header=True, sep='\t', index=False)
+
+# Sort by SAD magnitude proportion
+snpExpEffects_df['SED_PROPORTION'] = np.abs(snpExpEffects_df['SED'] / ((snpExpEffects_df['REF'] + snpExpEffects_df['ALT']) / 2))
+snpExpEffects_df_sorted = snpExpEffects_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False)
+snpExpEffects_df_sorted = snpExpEffects_df_sorted.drop('SED_MAGNITUDES', axis=1)
+snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.csv', header=True, sep='\t', index=False)
