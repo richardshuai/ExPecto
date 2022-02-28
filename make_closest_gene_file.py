@@ -17,34 +17,50 @@ from liftover import get_lifter
 def main():
     parser = argparse.ArgumentParser(description='Make closest gene file required by predict.py')
     parser.add_argument('hg19_snps_file')
+    parser.add_argument('--all_in_receptive_field', action='store_true')
     parser.add_argument('--geneanno_file', dest='geneanno_file', type=str, default='./resources/geneanno.csv')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_closest_gene_file',
                         help='Output directory')
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
-
     vcf = pd.read_csv(args.hg19_snps_file, sep='\t', header=None, comment='#')
     geneanno = pd.read_csv(args.geneanno_file, index_col=0)
 
+    # Create VCF file containing SNPs with multiplicity equal to number of genes in receptive field
+    vcf_out_path = f'{args.out_dir}/snps_hg19.vcf'
+    vcf_file_out = open(vcf_out_path, 'w')
+    print('##fileformat=VCFv4.3', file=vcf_file_out)
+    print('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO', file=vcf_file_out)
+    vcf_file_out.close()
+
+    vcf_out_df = pd.DataFrame(columns=np.arange(vcf.shape[1]))
     closest_gene_df = pd.DataFrame(columns=('snp_chrom', 'snp_pos_start', 'snp_pos', 'ref', 'alt',
                                             'tss_chrom', 'tss_pos_start', 'tss_pos', 'tss_strand', 'ens_id',
                                             'dist_to_tss'))
-
-    for i, row in vcf.iterrows():
+    idx = 0
+    for _, row in vcf.iterrows():
         snp_chrom, snp_pos, ref, alt = row[0], row[1], row[3], row[4]
 
         # Get closest gene to SNP
         # TODO: Can we get multiple genes in the receptive field instead?
-        gene_row = find_closest_gene(snp_chrom, snp_pos, geneanno)
-        tss_chrom, tss_pos, tss_strand = gene_row['seqnames'], gene_row['CAGE_representative_TSS'], gene_row['strand']
-        ens_id = gene_row.name
-        dist_to_tss = tss_pos - snp_pos
+        if args.all_in_receptive_field:
+            genes_df = get_genes_in_receptive_field(snp_chrom, snp_pos, geneanno)
+        else:
+            genes_df = find_closest_gene(snp_chrom, snp_pos, geneanno)
 
-        closest_gene_df.loc[i] = [snp_chrom[3:], snp_pos - 1, snp_pos, ref, alt, tss_chrom[3:], tss_pos - 1, tss_pos,
-                                     tss_strand, ens_id, dist_to_tss]
+        for ens_id, gene_row in genes_df.iterrows():
+            tss_chrom, tss_pos, tss_strand = gene_row['seqnames'], gene_row['CAGE_representative_TSS'], gene_row['strand']
+            dist_to_tss = tss_pos - snp_pos
 
-    closest_gene_df.to_csv(f'{args.out_dir}/closest_gene.tsv', sep='\t', index=False, header=False)
+            vcf_out_df.loc[idx] = row
+            closest_gene_df.loc[idx] = [snp_chrom[3:], snp_pos - 1, snp_pos, ref, alt, tss_chrom[3:], tss_pos - 1,
+                                          tss_pos, tss_strand, ens_id, dist_to_tss]
+            idx += 1
+
+
+    closest_gene_df.to_csv(f'{args.out_dir}/closest_genes.tsv', sep='\t', index=False, header=False)
+    vcf_out_df.to_csv(vcf_out_path, sep='\t', header=False, index=False, mode='a')
 
 
 def find_closest_gene(snp_chrom, snp_pos, geneanno):
@@ -55,8 +71,38 @@ def find_closest_gene(snp_chrom, snp_pos, geneanno):
     """
     geneanno = geneanno.loc[geneanno['seqnames'] == snp_chrom]
     geneanno['dists'] = geneanno['CAGE_representative_TSS'] - snp_pos
-    closest_i = np.argmin(np.abs(geneanno['dists']))
-    return geneanno.iloc[closest_i]
+    closest_i = np.argmin(np.abs(geneanno['dists']).values)
+    return geneanno.iloc[closest_i:closest_i + 1]
+
+
+def get_genes_in_receptive_field(snp_chrom, snp_pos, geneanno):
+    """
+    Returns rows in gene anno of all genes within receptive field from snp_chrom, snp_pos, and tss strand.
+    Receptive field is hardcoded assuming 20kb shifts and 2000bp input size.
+    - snp_chrom: chromosome of SNP, e.g. "chr1"
+    - snp_pos: position of SNP
+    """
+    geneanno = geneanno.loc[geneanno['seqnames'] == snp_chrom]
+    geneanno['dists'] = geneanno['CAGE_representative_TSS'] - snp_pos
+
+    # Filter by whether gene is in receptive field
+    shifts = np.array(list(range(-20000, 20000, 200)))
+    windowsize = 1000
+
+    geneanno_rf = geneanno[geneanno.apply(lambda x: is_in_receptive_field(x, shifts, windowsize), axis=1)]
+    if geneanno_rf.empty:
+        closest_i = np.argmin(np.abs(geneanno['dists']).values)
+        geneanno_rf = geneanno.iloc[closest_i:closest_i + 1]
+
+    return geneanno_rf
+
+
+def is_in_receptive_field(gene_row, shifts, windowsize):
+    strand = 1 if gene_row.loc['strand'] == '+' else -1
+    start = np.min((shifts * strand) - int(windowsize / 2 - 1))
+    stop = np.max((shifts * strand) + int(windowsize / 2))
+
+    return start <= -gene_row['dists'] <= stop
 
 
 if __name__ == '__main__':

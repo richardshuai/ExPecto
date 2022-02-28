@@ -27,6 +27,9 @@ def main():
     parser.add_argument('--beluga_model', type=str, default='./resources/deepsea.beluga.pth')
     parser.add_argument('--batch_size', action="store", dest="batch_size",
                         type=int, default=1024, help="Batch size for neural network predictions.")
+    parser.add_argument('--eighth_split', dest='eighth_split',
+                        default=None, type='int',
+                        help='Split into eighths for computation. one of [0, 1, 2, 3, 4, 5, 6, 7 or None if all.')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_predict_consensus',
                         help='Output directory')
     args = parser.parse_args()
@@ -49,8 +52,14 @@ def main():
     shifts = np.array(list(range(-20000, 20000, 200)))
     genes = natsorted([os.path.basename(file) for file in glob.glob(f'{consensus_dir}/*')])
 
+    # Split into fourths if option is set
+    if args.fourth_split is None:
+        gene_splits = np.array_split(genes, 8)
+        genes = gene_splits[args.fourth_split]
+        assert len(genes) > 0, "Gene split resulted in empty list"
+
     print("Predicting chromatin for all samples for all genes...")
-    for gene in tqdm(genes[0:1]):
+    for gene in tqdm(genes[0:3]):
         fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
 
         preds_dir = f'{args.out_dir}/{gene}'
@@ -97,31 +106,31 @@ def main():
         expecto_preds = bst.predict(expecto_features)
 
 
-        genes_file = '/home/rshuai/research/ni-lab/analysis/geuvadis_data/eur_eqtl_genes_converted.csv'
-        geuvadis_expression_file = '/home/rshuai/research/ni-lab/analysis/geuvadis_data/GD462.GeneQuantRPKM.50FN.samplename.resk10.txt'
-
-        genes_df = pd.read_csv(genes_file, names=['ens_id', 'chrom', 'bp', 'gene_symbol', 'strand'], index_col=False)
-        genes_df['gene_symbol'] = genes_df['gene_symbol'].fillna(genes_df['ens_id'])
-        genes_df = genes_df.set_index('gene_symbol')
+        # genes_file = '/home/rshuai/research/ni-lab/analysis/geuvadis_data/eur_eqtl_genes_converted.csv'
+        # geuvadis_expression_file = '/home/rshuai/research/ni-lab/analysis/geuvadis_data/GD462.GeneQuantRPKM.50FN.samplename.resk10.txt'
+        #
+        # genes_df = pd.read_csv(genes_file, names=['ens_id', 'chrom', 'bp', 'gene_symbol', 'strand'], index_col=False)
+        # genes_df['gene_symbol'] = genes_df['gene_symbol'].fillna(genes_df['ens_id'])
+        # genes_df = genes_df.set_index('gene_symbol')
 
         # Read Geuvadis data
-        geuvadis_exp_df = pd.read_csv(geuvadis_expression_file, sep='\t')
-        geuvadis_exp_df['Gene_Symbol'] = geuvadis_exp_df['Gene_Symbol'].apply(lambda x: x.split('.')[0])  # Ensembl IDs
-        geuvadis_exp_df = geuvadis_exp_df.rename({'Gene_Symbol': 'ens_id'}, axis=1)
-
-        preds_ti = expecto_preds
-        preds_df = pd.DataFrame({'record_ids': fasta_record_ids, 'preds': preds_ti})
-        records_df = pd.DataFrame(preds_df['record_ids'].str.split('|').values.tolist(),
-                                  columns=['chrom:pos', 'sample', 'strand', 'haplotype'])
-        preds_df['sample'] = records_df['sample']
-        preds_df = preds_df.groupby('sample')['preds'].mean().reset_index()
-        gene_exp = geuvadis_exp_df[geuvadis_exp_df['ens_id'] == genes_df.loc[gene.upper()]['ens_id']].T.iloc[4:].astype(float)
-        preds_df = preds_df.merge(gene_exp, how='inner', left_on='sample', right_index=True, validate='1:1')
-        plot_preds(np.log(preds_df.iloc[:, -1]).values, preds_df['preds'].values,
-                   title='ExPecto Predictions vs. Geuvadis',
-                   xlabel='log(Geuvadis median)',
-                   ylabel='log(prediction)',
-                   out_dir=f'{args.out_dir}/expecto_pred_vs_geuvadis.png')
+        # geuvadis_exp_df = pd.read_csv(geuvadis_expression_file, sep='\t')
+        # geuvadis_exp_df['Gene_Symbol'] = geuvadis_exp_df['Gene_Symbol'].apply(lambda x: x.split('.')[0])  # Ensembl IDs
+        # geuvadis_exp_df = geuvadis_exp_df.rename({'Gene_Symbol': 'ens_id'}, axis=1)
+        #
+        # preds_ti = expecto_preds
+        # preds_df = pd.DataFrame({'record_ids': fasta_record_ids, 'preds': preds_ti})
+        # records_df = pd.DataFrame(preds_df['record_ids'].str.split('|').values.tolist(),
+        #                           columns=['chrom:pos', 'sample', 'strand', 'haplotype'])
+        # preds_df['sample'] = records_df['sample']
+        # preds_df = preds_df.groupby('sample')['preds'].mean().reset_index()
+        # gene_exp = geuvadis_exp_df[geuvadis_exp_df['ens_id'] == genes_df.loc[gene.upper()]['ens_id']].T.iloc[4:].astype(float)
+        # preds_df = preds_df.merge(gene_exp, how='inner', left_on='sample', right_index=True, validate='1:1')
+        # plot_preds(np.log(preds_df.iloc[:, -1]).values, preds_df['preds'].values,
+        #            title='ExPecto Predictions vs. Geuvadis',
+        #            xlabel='log(Geuvadis)',
+        #            ylabel='log(prediction)',
+        #            out_dir=f'{args.out_dir}/expecto_pred_vs_geuvadis.png')
 
         with h5py.File(f'{preds_dir}/{gene}.h5', 'w') as preds_h5:
             preds_h5.create_dataset('preds', data=expecto_preds)

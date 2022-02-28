@@ -19,6 +19,8 @@ import numpy as np
 import h5py
 from six.moves import reduce
 import os
+import matplotlib.pyplot as plt
+from matplotlib.cm import get_cmap
 
 
 parser = argparse.ArgumentParser(description='Process some integers.')
@@ -29,6 +31,8 @@ parser.add_argument('--snpEffectFilePattern', action="store", dest="snpEffectFil
                     help="SNP effect hdf5 filename pattern. Use SHIFT as placeholder for shifts.")
 parser.add_argument('--modelList', action="store", dest="modelList",
                     help="A list of paths of binary xgboost model files (if end with .list) or a combined model file (if ends with .csv).")
+parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
+                    help="tsv file denoting Beluga features")
 parser.add_argument('--nfeatures', action="store",
                     dest="nfeatures", type=int, default=2002)
 parser.add_argument('-o', action="store", dest="out_dir")
@@ -48,6 +52,22 @@ parser.add_argument('--threads', action="store", dest="threads",
 args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
+
+
+def interpret_model(model, ref_features, alt_features):
+    dump = model.get_dump()[0].strip('\n').split('\n')
+    bias = float(dump[1])
+    weights = np.array(list(map(float, dump[3:])))
+    preds_per_feature = (weights * (alt_features - ref_features))  # omit bias term because of difference
+    preds_per_feature = preds_per_feature.ravel()\
+        .reshape(preds_per_feature.shape[0], 10, 2002)\
+        .transpose(0, 2, 1)  # (n_snps, n_chromatin_marks, n_features_per_mark)
+
+    preds_per_feature = preds_per_feature.sum(axis=-1)  # sum over exponential basis function contributions
+    preds_per_feature_proportion = preds_per_feature / preds_per_feature.sum(axis=-1, keepdims=True)
+
+    # test = model.predict(xgb.DMatrix(alt_features)) - model.predict(xgb.DMatrix(ref_features))
+    return preds_per_feature_proportion
 
 
 def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_models, maxshift=800, nfeatures=2002, batchSize=500,old_format=False):
@@ -95,17 +115,24 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
     ref = np.zeros((n_snps, len(all_models)))
     alt = np.zeros((n_snps, len(all_models)))
     effect = np.zeros((n_snps, len(all_models)))
+    preds_per_feature_proportion = np.zeros((n_snps, nfeatures, len(all_models)))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
         print("Processing " + str(i) + "th batch of "+str(batchSize))
         # compute gene expression change with models
         diff = reduce(lambda x, y: x + y, [np.tile(np.asarray(snpeffects[j][i * batchSize:(i + 1) * batchSize, :]), 10)
                                  * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
-
-        ref_features =  reduce(lambda x, y: x + y, [np.tile(np.asarray(ref_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
+        # x = np.array(snpeffects)
+        # y = np.array(Xreducedall_diffs)
+        # y.shape
+        # (9, 423, 10)
+        # x.shape
+        # (9, 423, 2002)
+        # np.sum(x[:, :, None, :] * y[:, :, :, None], axis=0).reshape(x.shape[1], -1)
+        ref_features = reduce(lambda x, y: x + y, [np.tile(np.asarray(ref_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
                                  * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
 
-        alt_features =  reduce(lambda x, y: x + y, [np.tile(np.asarray(alt_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
+        alt_features = reduce(lambda x, y: x + y, [np.tile(np.asarray(alt_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
                                  * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
 
         if old_format:
@@ -119,13 +146,18 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
         dtest_alt_preds = xgb.DMatrix(alt_features)
 
         for j in range(len(all_models)):
-            effect[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_ref) - \
-                                                           all_models[j].predict(dtest_alt)
+            model = all_models[j]
+            effect[i * batchSize:(i + 1) * batchSize, j] = model.predict(dtest_ref) - \
+                                                           model.predict(dtest_alt)
 
-            ref[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_ref_preds)
-            alt[i * batchSize:(i + 1) * batchSize, j] = all_models[j].predict(dtest_alt_preds)
+            ref[i * batchSize:(i + 1) * batchSize, j] = model.predict(dtest_ref_preds)
+            alt[i * batchSize:(i + 1) * batchSize, j] = model.predict(dtest_alt_preds)
 
-    return effect, ref, alt
+            preds_per_feature_proportion[i * batchSize:(i + 1) * batchSize, :, j] = \
+                interpret_model(model, ref_features, alt_features)
+
+
+    return effect, ref, alt, preds_per_feature_proportion
 
 #load resources
 modelList = pd.read_csv(args.modelList,sep='\t',header=0)
@@ -181,9 +213,25 @@ coor = pd.read_csv(args.coorFile,sep='\t',header=None,comment='#')
 coor = coor.iloc[index_start:index_end,:]
 
 #Fetch the distance to TSS information
+
+def add_multiplicity_suffixes(arr):
+    """
+    Takes in array and appends suffixes _i where i is the number of times the value has shown up previously
+    in the array. Used for matching below.
+    """
+    suffixed_array = []
+    counts = {}
+    for x in arr:
+        suffixed_x = x + f'_{counts.get(x, 0)}'
+        counts[x] = counts.get(x, 0) + 1
+        suffixed_array.append(suffixed_x)
+
+    return np.array(suffixed_array)
+
 gene = pd.read_csv(args.geneFile,sep='\t',header=None,comment='#')
-geneinds = pd.match(coor.iloc[:,0].map(str).str.replace('chr','')+' '+coor.iloc[:,1].map(str),
-            gene.iloc[:,0].map(str).str.replace('chr','')+' '+gene.iloc[:,2].map(str))
+geneinds = pd.match(add_multiplicity_suffixes(coor.iloc[:,0].map(str).str.replace('chr','')+' '+coor.iloc[:,1].map(str)),
+            add_multiplicity_suffixes(gene.iloc[:,0].map(str).str.replace('chr','')+' '+gene.iloc[:,2].map(str)))
+
 if np.any(geneinds==-1):
     raise ValueError("Gene association file does not match the vcf file.")
 if args.fixeddist == 0:
@@ -193,11 +241,12 @@ else:
 genename = np.asarray(gene.iloc[geneinds,-2])
 strand= np.asarray(gene.iloc[geneinds,-3])
 
-#comptue expression effects
-snpExpEffects, ref, alt = compute_effects(snpEffects, ref_preds, alt_preds, \
-                                dist, strand,\
-                                models, maxshift=maxshift, nfeatures=args.nfeatures,
-                                batchSize = args.batchSize, old_format = old_format)
+# compute expression effects
+snpExpEffects, ref, alt, preds_per_feature_proportion = compute_effects(snpEffects, ref_preds, alt_preds,
+                                                                        dist, strand,
+                                                                        models, maxshift=maxshift,
+                                                                        nfeatures=args.nfeatures,
+                                                                        batchSize=args.batchSize, old_format=old_format)
 #write output
 snpExpEffects_df = coor
 snpExpEffects_df['dist'] = dist
@@ -222,13 +271,54 @@ snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
 snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
 
 # Sort by magnitude of SNP effects
-snpExpEffects_df['SED_MAGNITUDES'] = np.abs(snpExpEffects_df['SED'])
-snpExpEffects_df_sorted = snpExpEffects_df.sort_values(by='SED_MAGNITUDES', axis=0, ascending=False)
-snpExpEffects_df_sorted = snpExpEffects_df_sorted.drop('SED_MAGNITUDES', axis=1)
+snpExpEffects_df_sorted = snpExpEffects_df.copy()
+snpExpEffects_df_sorted['SED_MAGNITUDES'] = np.abs(snpExpEffects_df_sorted['SED'])
+snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_MAGNITUDES', axis=0, ascending=False)
 snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_magnitude.csv', header=True, sep='\t', index=False)
 
 # Sort by SAD magnitude proportion
-snpExpEffects_df['SED_PROPORTION'] = np.abs(snpExpEffects_df['SED'] / ((snpExpEffects_df['REF'] + snpExpEffects_df['ALT']) / 2))
-snpExpEffects_df_sorted = snpExpEffects_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False)
-snpExpEffects_df_sorted = snpExpEffects_df_sorted.drop('SED_MAGNITUDES', axis=1)
+snpExpEffects_df_sorted = snpExpEffects_df.copy()
+snpExpEffects_df_sorted['SED_PROPORTION'] = np.abs(snpExpEffects_df_sorted['SED'] / ((snpExpEffects_df_sorted['REF'] + snpExpEffects_df_sorted['ALT']) / 2))
+snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_PROPORTION', axis=0, ascending=False)
 snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.csv', header=True, sep='\t', index=False)
+
+# Interpret SED scores
+beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
+beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df['Assay'] + '/' + beluga_features_df['Cell type']
+feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=beluga_features_df['Assay type + assay + cell type'])
+
+sed_feature_contributions_df = snpExpEffects_df.copy()
+sed_feature_contributions_df['SED_PROPORTION'] = np.abs(sed_feature_contributions_df['SED'] / ((sed_feature_contributions_df['REF'] + sed_feature_contributions_df['ALT']) / 2))
+sed_feature_contributions_df = pd.concat([sed_feature_contributions_df, feature_contributions_df], axis=1)
+sed_feature_contributions_df = sed_feature_contributions_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False).reset_index(drop=True)
+sed_feature_contributions_df.to_csv(f'{args.out_dir}/sed_sorted_by_proportion_with_contribs.csv', header=True, sep='\t', index=False)
+
+# Plotting
+# TODO: Plot top k genes
+# TODO: Plot top m features by absolute value
+k = 10
+m = 10
+
+figures_dir = f'{args.out_dir}/figures'
+os.makedirs(figures_dir, exist_ok=True)
+
+for i, row in sed_feature_contributions_df.iterrows():
+    if i == k:
+        break
+    feature_contribs = row.iloc[16:]
+    top_feature_contribs = feature_contribs.iloc[np.argsort(feature_contribs.apply(abs))[::-1][:m]]
+
+    plt.figure(figsize=(6.4, 8))
+
+    cmap = get_cmap("Set3")
+    colors = (cmap.colors * int(np.ceil(m / len(cmap.colors))))[:m]
+    plt.bar(range(m), top_feature_contribs, edgecolor='black', color=colors)
+    rsid, gene = row.iloc[3], row.iloc[10]
+    plt.title(f"{rsid} effect on {gene} by epigenomic feature contributions")
+
+    handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(m)]
+    labels = top_feature_contribs.index
+    plt.legend(handles, labels, bbox_to_anchor=(-0.1, -0.15), loc='upper left', ncol=1, fontsize=10)
+    plt.tight_layout()
+    plt.savefig(f"{figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
+    plt.show()
