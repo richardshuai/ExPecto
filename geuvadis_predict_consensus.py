@@ -52,7 +52,7 @@ def main():
     genes = natsorted([os.path.basename(file) for file in glob.glob(f'{consensus_dir}/*')])
 
     # Split into eighths if option is set
-    if args.eighth_split is None:
+    if args.eighth_split is not None:
         gene_splits = np.array_split(genes, 8)
         genes = gene_splits[args.eighth_split]
         assert len(genes) > 0, "Gene split resulted in empty list"
