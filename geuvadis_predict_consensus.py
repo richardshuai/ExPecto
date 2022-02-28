@@ -27,9 +27,8 @@ def main():
     parser.add_argument('--beluga_model', type=str, default='./resources/deepsea.beluga.pth')
     parser.add_argument('--batch_size', action="store", dest="batch_size",
                         type=int, default=1024, help="Batch size for neural network predictions.")
-    parser.add_argument('--eighth_split', dest='eighth_split',
-                        default=None, type='int',
-                        help='Split into eighths for computation. one of [0, 1, 2, 3, 4, 5, 6, 7 or None if all.')
+    parser.add_argument('--eighth_split', action='store', dest='eighth_split',
+                        type=int, default=None, help='Split into eighths for computation. one of [0, 1, 2, 3, 4, 5, 6, 7 or None if all.')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_predict_consensus',
                         help='Output directory')
     args = parser.parse_args()
@@ -52,14 +51,14 @@ def main():
     shifts = np.array(list(range(-20000, 20000, 200)))
     genes = natsorted([os.path.basename(file) for file in glob.glob(f'{consensus_dir}/*')])
 
-    # Split into fourths if option is set
-    if args.fourth_split is None:
+    # Split into eighths if option is set
+    if args.eighth_split is None:
         gene_splits = np.array_split(genes, 8)
-        genes = gene_splits[args.fourth_split]
+        genes = gene_splits[args.eighth_split]
         assert len(genes) > 0, "Gene split resulted in empty list"
 
     print("Predicting chromatin for all samples for all genes...")
-    for gene in tqdm(genes[0:3]):
+    for gene in tqdm(genes):
         fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
 
         preds_dir = f'{args.out_dir}/{gene}'
