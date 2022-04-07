@@ -53,6 +53,9 @@ args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
 
+input_features_df = pd.read_csv('output_dir/interpret_features_grouped/all_feature_clusters.tsv', sep='\t', index_col=0)
+clusters = input_features_df['cluster']
+
 
 def interpret_model(model, ref_features, alt_features):
     dump = model.get_dump()[0].strip('\n').split('\n')
@@ -68,6 +71,26 @@ def interpret_model(model, ref_features, alt_features):
 
     # test = model.predict(xgb.DMatrix(alt_features)) - model.predict(xgb.DMatrix(ref_features))
     return preds_per_feature_proportion
+
+
+def interpret_model_with_clusters(model, ref_features, alt_features, clusters):
+    # TODO: Normalize cluster contribs by size of cluster? to get average contribution of feature in cluster.
+    # TODO: Just change it to mean() to do this, but I don't think it makes sense to take the avg since it penalizes redundant features.
+    dump = model.get_dump()[0].strip('\n').split('\n')
+    bias = float(dump[1])
+    weights = np.array(list(map(float, dump[3:])))
+    preds_per_feature = (weights * (alt_features - ref_features))  # omit bias term because of difference
+    preds_per_feature = preds_per_feature.ravel()\
+        .reshape(preds_per_feature.shape[0], 10, 2002)\
+        .transpose(0, 2, 1)  # (n_snps, n_chromatin_marks, n_features_per_mark)
+
+    preds_per_feature_df = pd.DataFrame(preds_per_feature.reshape(preds_per_feature.shape[0], -1).T)  # (n_input_features, n_snps)
+    preds_per_feature_df['cluster'] = clusters
+    cluster_contribs = preds_per_feature_df.groupby('cluster').sum().values.T
+
+    cluster_contribs_proportion = cluster_contribs / cluster_contribs.sum(axis=-1, keepdims=True)
+
+    return cluster_contribs_proportion
 
 
 def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_models, maxshift=800, nfeatures=2002, batchSize=500,old_format=False):
@@ -116,6 +139,7 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
     alt = np.zeros((n_snps, len(all_models)))
     effect = np.zeros((n_snps, len(all_models)))
     preds_per_feature_proportion = np.zeros((n_snps, nfeatures, len(all_models)))
+    cluster_proportions = np.zeros((n_snps, len(np.unique(clusters)), len(all_models)))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
         print("Processing " + str(i) + "th batch of "+str(batchSize))
@@ -156,8 +180,11 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
             preds_per_feature_proportion[i * batchSize:(i + 1) * batchSize, :, j] = \
                 interpret_model(model, ref_features, alt_features)
 
+            cluster_proportions[i * batchSize:(i + 1) * batchSize, :, j] = \
+                interpret_model_with_clusters(model, ref_features, alt_features, clusters)
 
-    return effect, ref, alt, preds_per_feature_proportion
+
+    return effect, ref, alt, preds_per_feature_proportion, cluster_proportions
 
 #load resources
 modelList = pd.read_csv(args.modelList,sep='\t',header=0)
@@ -242,7 +269,7 @@ genename = np.asarray(gene.iloc[geneinds,-2])
 strand= np.asarray(gene.iloc[geneinds,-3])
 
 # compute expression effects
-snpExpEffects, ref, alt, preds_per_feature_proportion = compute_effects(snpEffects, ref_preds, alt_preds,
+snpExpEffects, ref, alt, preds_per_feature_proportion, cluster_proportions = compute_effects(snpEffects, ref_preds, alt_preds,
                                                                         dist, strand,
                                                                         models, maxshift=maxshift,
                                                                         nfeatures=args.nfeatures,
@@ -295,30 +322,99 @@ sed_feature_contributions_df.to_csv(f'{args.out_dir}/sed_sorted_by_proportion_wi
 
 # Plotting
 # TODO: Plot top k genes
+# # TODO: Plot top m features by absolute value
+# k = 10
+# m = 10
+#
+# figures_dir = f'{args.out_dir}/figures'
+# os.makedirs(figures_dir, exist_ok=True)
+#
+# for i, row in sed_feature_contributions_df.iterrows():
+#     if i == k:
+#         break
+#     feature_contribs = row.iloc[16:]
+#     top_feature_contribs = feature_contribs.iloc[np.argsort(feature_contribs.apply(abs))[::-1][:m]]
+#
+#     plt.figure(figsize=(6.4, 8))
+#
+#     cmap = get_cmap("Set3")
+#     colors = (cmap.colors * int(np.ceil(m / len(cmap.colors))))[:m]
+#     plt.bar(range(m), top_feature_contribs, edgecolor='black', color=colors)
+#     rsid, gene = row.iloc[3], row.iloc[10]
+#     plt.title(f"{rsid} effect on {gene} by epigenomic feature contributions")
+#
+#     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(m)]
+#     labels = top_feature_contribs.index
+#     plt.legend(handles, labels, bbox_to_anchor=(-0.1, -0.15), loc='upper left', ncol=1, fontsize=10)
+#     plt.tight_layout()
+#     plt.savefig(f"{figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
+#     plt.show()
+
+
+# Plotting
+# TODO: Plot top k genes
 # TODO: Plot top m features by absolute value
+cluster_proportions = cluster_proportions.squeeze()
+cluster_proportions_df = pd.DataFrame(cluster_proportions,
+                                      columns=[f'cluster_{idx}' for idx in range(cluster_proportions.shape[1])])
+sed_cluster_proportions_df = snpExpEffects_df.copy()
+sed_cluster_proportions_df['SED_PROPORTION'] = np.abs(sed_cluster_proportions_df['SED'] / ((sed_cluster_proportions_df['REF'] + sed_cluster_proportions_df['ALT']) / 2))
+sed_cluster_proportions_df = pd.concat([sed_cluster_proportions_df, cluster_proportions_df], axis=1)
+sed_cluster_proportions_df = sed_cluster_proportions_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False).reset_index(drop=True)
+sed_cluster_proportions_df.to_csv(f'{args.out_dir}/cluster_contribs.csv', header=True, sep='\t', index=False)
+
 k = 10
-m = 10
 
-figures_dir = f'{args.out_dir}/figures'
-os.makedirs(figures_dir, exist_ok=True)
+cluster_proportions = cluster_proportions.squeeze()
+cluster_figures_dir = f'{args.out_dir}/cluster_figures'
+os.makedirs(cluster_figures_dir, exist_ok=True)
 
-for i, row in sed_feature_contributions_df.iterrows():
+
+# for i, row in sed_feature_contributions_df.iterrows():
+#     if i == k:
+#         break
+#     feature_contribs = row.iloc[16:]
+#     top_feature_contribs = feature_contribs.iloc[np.argsort(feature_contribs.apply(abs))[::-1][:m]]
+#
+#     plt.figure(figsize=(6.4, 8))
+
+#
+#     plt.figure(figsize=(6.4, 8))
+#
+#     cmap = get_cmap("Set3")
+#     colors = (cmap.colors * int(np.ceil(m / len(cmap.colors))))[:m]
+#     plt.bar(range(m), top_feature_contribs, edgecolor='black', color=colors)
+#     rsid, gene = row.iloc[3], row.iloc[10]
+#     plt.title(f"{rsid} effect on {gene} by epigenomic feature contributions")
+#
+#     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(m)]
+#     labels = top_feature_contribs.index
+#     plt.legend(handles, labels, bbox_to_anchor=(-0.1, -0.15), loc='upper left', ncol=1, fontsize=10)
+#     plt.tight_layout()
+#     plt.savefig(f"{figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
+#     plt.show()
+
+
+k = 10  # num_snps to plot
+m = 10  # num_clusters to plot
+for i, row in sed_cluster_proportions_df.iterrows():
     if i == k:
         break
-    feature_contribs = row.iloc[16:]
-    top_feature_contribs = feature_contribs.iloc[np.argsort(feature_contribs.apply(abs))[::-1][:m]]
+    cluster_contribs = row.iloc[16:]
+    top_cluster_contribs = cluster_contribs.iloc[np.argsort(cluster_contribs.apply(abs))[::-1][:m]]
 
     plt.figure(figsize=(6.4, 8))
 
     cmap = get_cmap("Set3")
     colors = (cmap.colors * int(np.ceil(m / len(cmap.colors))))[:m]
-    plt.bar(range(m), top_feature_contribs, edgecolor='black', color=colors)
-    rsid, gene = row.iloc[3], row.iloc[10]
+    plt.bar(range(m), top_cluster_contribs, edgecolor='black', color=colors)
+    rsid, gene = sed_feature_contributions_df.iloc[i, 3], sed_feature_contributions_df.iloc[i, 10]
     plt.title(f"{rsid} effect on {gene} by epigenomic feature contributions")
 
-    handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(m)]
-    labels = top_feature_contribs.index
+    handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(10)]
+    labels = top_cluster_contribs.index
     plt.legend(handles, labels, bbox_to_anchor=(-0.1, -0.15), loc='upper left', ncol=1, fontsize=10)
     plt.tight_layout()
-    plt.savefig(f"{figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
+    plt.savefig(f"{cluster_figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
     plt.show()
+

@@ -7,6 +7,8 @@ from torch import nn
 import numpy as np
 import pandas as pd
 import h5py
+import os
+from tqdm import tqdm
 
 # Script based on https://github.com/FunctionLab/ExPecto/issues/9
 
@@ -18,8 +20,11 @@ def main():
                         dest="windowsize", type=int, default=2000,
                         help='Input window size for predictions')
     parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('-o', dest="out_dir", type=str, default='temp_replicate_expecto_features',
+                        help='Output directory')
     args = parser.parse_args()
 
+    os.makedirs(args.out_dir, exist_ok=True)
     genome = pyfasta.Fasta('./resources/hg19.fa')
 
     # start by reading in the .npy features
@@ -58,8 +63,8 @@ def main():
 
 
     # Make predictions and compute features with weights
-    reconstructed_expecto_withrc = []
-    for gene, chrom, tss, strand in gene_chrom_tss_strand[:10]:
+    # reconstructed_expecto_withrc = []
+    for gene, chrom, tss, strand in tqdm(gene_chrom_tss_strand):
         seqs_to_predict = []
         for shift in shifts:
             seq = genome.sequence({'chr': chrom,
@@ -78,11 +83,15 @@ def main():
         prediction = model.forward(model_input).detach().cpu().numpy().copy()
         rc_prediction = model.forward(rc_model_input).detach().cpu().numpy().copy()
         pred_fwd_rc = 0.5 * (prediction + rc_prediction)
-        reconstructed_expecto_withrc.append(np.sum(pos_weights[:, :, None] * pred_fwd_rc[None, :, :], axis=1).flatten())
 
-    reconstructed_expecto_withrc = np.array(reconstructed_expecto_withrc)
-    from scipy.stats import spearmanr
-    print(spearmanr(reconstructed_expecto_withrc.flatten(), expecto_features[:len(reconstructed_expecto_withrc)].flatten()))
+        # save to npz files
+        np.save(f'{args.out_dir}/{gene}', pred_fwd_rc)
+
+        # reconstructed_expecto_withrc.append(np.sum(pos_weights[:, :, None] * pred_fwd_rc[None, :, :], axis=1).flatten())
+
+    # reconstructed_expecto_withrc = np.array(reconstructed_expecto_withrc)
+    # from scipy.stats import spearmanr
+    # print(spearmanr(reconstructed_expecto_withrc.flatten(), expecto_features[:len(reconstructed_expecto_withrc)].flatten()))
 
 
 class LambdaBase(nn.Sequential):

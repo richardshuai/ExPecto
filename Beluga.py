@@ -1,6 +1,5 @@
 from torch import nn
 
-
 class LambdaBase(nn.Sequential):
     def __init__(self, fn, *args):
         super(LambdaBase, self).__init__(*args)
