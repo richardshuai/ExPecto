@@ -28,8 +28,6 @@ def main():
     genome = pyfasta.Fasta('./resources/hg19.fa')
 
     # start by reading in the .npy features
-    npy_features_file = "./resources/Xreducedall.2002.npy"
-    expecto_features = np.load(npy_features_file)
 
     model = Beluga()
     model.load_state_dict(torch.load('./resources/deepsea.beluga.pth'))
