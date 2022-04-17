@@ -24,8 +24,9 @@ import os
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--targetIndex', action="store",
                     dest="targetIndex", type=int)
-parser.add_argument('--output', action="store", dest="output")
 parser.add_argument('--expFile', action="store", dest="expFile")
+parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
+                    help="tsv file denoting Beluga features")
 parser.add_argument('--inputFile', action="store",
                     dest="inputFile", default='./resources/Xreducedall.2002.npy')
 parser.add_argument('--annoFile', action="store",
@@ -46,7 +47,6 @@ parser.add_argument('--base_score', action="store",
                     dest="base_score", type=float, default=2)
 parser.add_argument('--threads', action="store",
                     dest="threads", type=int, default=16)
-parser.add_argument('--plots_out_dir', type=str, default='plots')
 parser.add_argument('--kidney_genes_only', action="store_true",
                     dest="kidney_genes_only", default=False,
                     help="If true, only use genes in our kidney data.")
@@ -54,11 +54,21 @@ parser.add_argument('--match_with_basenji2', action='store_true',
                     dest='match_with_basenji2', default=False,
                     help='If true, only use genes in our cultured primary tubule data that are included in the Basenji2 '
                          'gene predictor')
+parser.add_argument('--no_tf_features', action='store_true',
+                    dest='no_tf_features', default=False,
+                    help='leave out TF marks for training')
+parser.add_argument('--no_dnase_features', action='store_true',
+                    dest='no_dnase_features', default=False,
+                    help='leave out DNase marks for training')
+parser.add_argument('--no_histone_features', action='store_true',
+                    dest='no_histone_features', default=False,
+                    help='leave out histone marks for training')
+parser.add_argument('--output_dir', type=str, default='temp_expecto_model')
 
 args = parser.parse_args()
 
 # Make model output dir
-os.makedirs(os.path.dirname(args.output), exist_ok=True)
+os.makedirs(args.output_dir, exist_ok=True)
 
 # read resources
 Xreducedall = np.load(args.inputFile)
@@ -91,6 +101,29 @@ if args.match_with_basenji2:
     cultured_counts_df = pd.read_csv(cultured_counts_file, sep='\t', index_col=0)
     filt = filt * (geneanno['id'].isin(cultured_counts_df['ens_id']).values)
 
+# Ablations
+beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
+beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df[
+    'Assay'] + '/' + beluga_features_df['Cell type']
+
+keep_mask = np.ones(beluga_features_df.shape[0], dtype=bool)
+
+if args.no_tf_features:
+    print("not including TF features")
+    keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'TF')
+
+if args.no_dnase_features:
+    print("not including DNase features")
+    keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'DNase')
+
+if args.no_histone_features:
+    print("not including histone features")
+    keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'Histone')
+
+keep_indices = np.nonzero(keep_mask)[0]
+num_genes = Xreducedall.shape[0]
+Xreducedall = Xreducedall.reshape(num_genes, 10, 2002)[:, :, keep_indices].reshape(num_genes, -1)
+
 # training
 trainind = np.asarray(geneanno['seqnames'] != 'chrX') * np.asarray(
     geneanno['seqnames'] != 'chrY') * np.asarray(geneanno['seqnames'] != 'chr8')
@@ -120,10 +153,11 @@ if args.evalFile != '':
     evaldf = pd.DataFrame({'pred':ypred,'target':np.asarray(
      np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount))})
     evaldf.to_csv(args.evalFile)
-bst.save_model(args.output + args.filterStr + '.pseudocount' + str(args.pseudocount) + '.lambda' + str(args.l2) + '.round' +
-               str(args.num_round) + '.basescore' + str(args.base_score) + '.' + geneexp.columns[args.targetIndex] + '.save')
-bst.dump_model(args.output + args.filterStr + '.pseudocount' + str(args.pseudocount) + '.lambda' + str(args.l2) + '.round' +
-               str(args.num_round) + '.basescore' + str(args.base_score) + '.' + geneexp.columns[args.targetIndex] + '.dump')
+
+bst.save_model(f'{args.output_dir}/expecto_{args.filterStr}.pseudocount{args.pseudocount}.lambda{args.l2}'
+               f'.round{args.num_round}.basescore{args.base_score}.{geneexp.columns[args.targetIndex]}.save')
+bst.dump_model(f'{args.output_dir}/expecto_{args.filterStr}.pseudocount{args.pseudocount}.lambda{args.l2}'
+               f'.round{args.num_round}.basescore{args.base_score}.{geneexp.columns[args.targetIndex]}.dump')
 
 # Plots
 def plot_preds(ytrue, ypred, out_dir):
@@ -144,10 +178,8 @@ def plot_preds(ytrue, ypred, out_dir):
     plt.close('all')
 
 
-os.makedirs(args.plots_out_dir, exist_ok=True)
-plot_preds(ytrue, ypred, f'{args.plots_out_dir}/test_plots.png')
-
+plot_preds(ytrue, ypred, f'{args.output_dir}/test_plots.png')
 
 ypred_train = bst.predict(dtrain)
 ytrue_train = np.asarray(np.log(geneexp.iloc[trainind * filt, args.targetIndex] + args.pseudocount))
-plot_preds(ytrue_train, ypred_train, f'{args.plots_out_dir}/train_plots.png')
+plot_preds(ytrue_train, ypred_train, f'{args.output_dir}/train_plots.png')

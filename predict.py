@@ -53,7 +53,8 @@ args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
 
-input_features_df = pd.read_csv('output_dir/interpret_features_grouped/all_feature_clusters.tsv', sep='\t', index_col=0)
+# input_features_df = pd.read_csv('output_dir/interpret_features_grouped/all_feature_clusters.tsv', sep='\t', index_col=0)
+input_features_df = pd.read_csv('output_dir/cluster_and_viz/all_feature_clusters.tsv', sep='\t', index_col=0)
 clusters = input_features_df['cluster']
 
 

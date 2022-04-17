@@ -70,7 +70,7 @@ testind = np.asarray(geneanno['seqnames'] == 'chr8')
 
 X_train = Xreducedall[trainind * filt, :]
 
-X_train_grouped = X_train.T.reshape(10, 2002, -1).transpose(1, 2, 0).reshape(2002, -1)  # num_marks x num_genes x 10 features per track
+X_train_grouped = X_train.T.reshape(10, 2002, -1).transpose(1, 2, 0).reshape(2002, -1)  # num_marks x num_genes * 10 features per track
 
 X_test = Xreducedall[testind * filt, :]
 
