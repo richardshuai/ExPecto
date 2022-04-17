@@ -17,6 +17,17 @@ from joblib import dump, load
 def main():
     parser = argparse.ArgumentParser(description='Compute SVD')
     parser.add_argument('replicate_expecto_features_dir')
+    parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
+                        help="tsv file denoting Beluga features")
+    parser.add_argument('--no_tf_features', action='store_true',
+                        dest='no_tf_features', default=False,
+                        help='leave out TF marks for training')
+    parser.add_argument('--no_dnase_features', action='store_true',
+                        dest='no_dnase_features', default=False,
+                        help='leave out DNase marks for training')
+    parser.add_argument('--no_histone_features', action='store_true',
+                        dest='no_histone_features', default=False,
+                        help='leave out histone marks for training')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_svd',
                         help='Output directory')
     args = parser.parse_args()
