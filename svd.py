@@ -48,9 +48,9 @@ def main():
     # TODO: Add random seed
 
     tracks = np.empty((2002, len(npy_files), 200), dtype=np.float32)
-    # for i, npy_file in enumerate(tqdm(npy_files)):
-    #     track = np.load(npy_file).T
-    #     tracks[:, i] = track
+    for i, npy_file in enumerate(tqdm(npy_files)):
+        track = np.load(npy_file).T
+        tracks[:, i] = track
 
     # Ablations
     beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
