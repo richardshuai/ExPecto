@@ -77,6 +77,7 @@ def main():
     tracks = tracks.reshape((tracks.shape[0], -1))
     print(f'Tracks shape: {tracks.shape}')
 
+    # tf-idf transform
     tf = tracks / tracks.sum(axis=-1, keepdims=True)  # term frequency
     idf = np.log(tracks.shape[0] / (1 + tracks.sum(axis=0)))  # inverse document freq (modified for continuous vals)
 
