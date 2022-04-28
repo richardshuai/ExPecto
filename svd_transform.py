@@ -29,6 +29,9 @@ def main():
     parser.add_argument('--no_histone_features', action='store_true',
                         dest='no_histone_features', default=False,
                         help='leave out histone marks for training')
+    parser.add_argument('--intersect_with_lambert', action='store_true',
+                        dest='intersect_with_lambert', default=False,
+                        help='intersect with Lambert2018_TFs_v_1.01_curatedTFs.csv')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_svd_transform',
                         help='Output directory')
     args = parser.parse_args()
@@ -63,6 +66,11 @@ def main():
     if args.no_histone_features:
         print("not including histone features")
         keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'Histone')
+
+    if args.intersect_with_lambert:
+        print("intersecting with Lambert data")
+        lambert_df = pd.read_csv('./resources/Lambert2018_TFs_v_1.01_curatedTFs.csv', index_col=0)
+        keep_mask = keep_mask & (beluga_features_df['Assay'].isin(lambert_df['HGNC symbol']))
 
     keep_indices = np.nonzero(keep_mask.values)[0]
     tracks = tracks[keep_indices]

@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 import pandas as pd
+import scanpy as sc
+from Orange.clustering import Louvain
+from Orange.data import Table
 
 
 def main():
@@ -39,25 +42,10 @@ def main():
     n_pcs = 20
     X = X[:, :n_pcs]
 
-    # k-means elbow plot
-    # objectives = []
-    # for k in tqdm(range(2, 200, 5)):
-    #     kmeans = KMeans(n_clusters=k)
-    #     kmeans.fit(X)
-    #     objectives.append(kmeans.inertia_)
-    #
-    # plt.figure()
-    # plt.plot(objectives)
-    # plt.show()
-
-    # Clustering with chosen k
-    print("clustering...")
-    k = 30  # choose k to use
-    kmeans = KMeans(n_clusters=k)
-    kmeans.fit(X)
-    labels = kmeans.labels_
-
     # t-SNE
+    louvain = Louvain(5)
+    labels = louvain(Table(X))
+
     X_embedded = TSNE(n_components=2, random_state=0).fit_transform(X)
 
     plt.figure()
@@ -94,7 +82,7 @@ def main():
     os.makedirs(cluster_dir, exist_ok=True)
     sizes_df = pd.DataFrame(columns=['size'])
 
-    for i in range(k):
+    for i in np.unique(labels):
         cluster_df = input_features_df[input_features_df['cluster'] == i]
         cluster_df.to_csv(f'{cluster_dir}/cluster_{i}.tsv', sep='\t')
         sizes_df.loc[f'cluster_{i}'] = cluster_df.shape[0]
