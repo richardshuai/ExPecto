@@ -12,14 +12,17 @@ Example:
 
 """
 import argparse
-import xgboost as xgb
-import pandas as pd
+import os
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
+import xgboost as xgb
 from scipy.stats import spearmanr, pearsonr
 from sklearn.metrics import r2_score
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
+
+from cluster_utils import get_keep_mask
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--targetIndex', action="store",
@@ -66,6 +69,9 @@ parser.add_argument('--no_histone_features', action='store_true',
 parser.add_argument('--intersect_with_lambert', action='store_true',
                     dest='intersect_with_lambert', default=False,
                     help='intersect with Lambert2018_TFs_v_1.01_curatedTFs.csv')
+parser.add_argument('--no_pol2', action='store_true',
+                    dest='no_pol2', default=False,
+                    help='take out Pol2*')
 parser.add_argument('--output_dir', type=str, default='temp_expecto_model')
 
 args = parser.parse_args()
@@ -109,25 +115,7 @@ beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
 beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df[
     'Assay'] + '/' + beluga_features_df['Cell type']
 
-keep_mask = np.ones(beluga_features_df.shape[0], dtype=bool)
-
-if args.no_tf_features:
-    print("not including TF features")
-    keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'TF')
-
-if args.no_dnase_features:
-    print("not including DNase features")
-    keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'DNase')
-
-if args.no_histone_features:
-    print("not including histone features")
-    keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'Histone')
-
-if args.intersect_with_lambert:
-    print("intersecting with Lambert data")
-    lambert_df = pd.read_csv('./resources/Lambert2018_TFs_v_1.01_curatedTFs.csv', index_col=0)
-    keep_mask = keep_mask & (beluga_features_df['Assay'].isin(lambert_df['HGNC symbol']))
-
+keep_mask = get_keep_mask(args, beluga_features_df)
 keep_indices = np.nonzero(keep_mask)[0]
 num_genes = Xreducedall.shape[0]
 Xreducedall = Xreducedall.reshape(num_genes, 10, 2002)[:, :, keep_indices].reshape(num_genes, -1)

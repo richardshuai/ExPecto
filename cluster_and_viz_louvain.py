@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 import argparse
-import numpy as np
 import os
-from sklearn.manifold import TSNE
+
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from tqdm import tqdm
+import numpy as np
 import pandas as pd
-import scanpy as sc
 from Orange.clustering import Louvain
 from Orange.data import Table
+from sklearn.manifold import TSNE
+
+from cluster_utils import get_keep_mask
 
 
 def main():
@@ -26,6 +26,12 @@ def main():
     parser.add_argument('--no_histone_features', action='store_true',
                         dest='no_histone_features', default=False,
                         help='leave out histone marks for training')
+    parser.add_argument('--intersect_with_lambert', action='store_true',
+                        dest='intersect_with_lambert', default=False,
+                        help='intersect with Lambert2018_TFs_v_1.01_curatedTFs.csv')
+    parser.add_argument('--no_pol2', action='store_true',
+                        dest='no_pol2', default=False,
+                        help='take out Pol2*')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_cluster_and_viz',
                         help='Output directory')
     args = parser.parse_args()
@@ -60,19 +66,7 @@ def main():
         'Assay'] + '/' + beluga_features_df['Cell type']
 
     # account for ablations
-    keep_mask = np.ones(beluga_features_df.shape[0], dtype=bool)
-
-    if args.no_tf_features:
-        print("not including TF features")
-        keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'TF')
-
-    if args.no_dnase_features:
-        print("not including DNase features")
-        keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'DNase')
-
-    if args.no_histone_features:
-        print("not including histone features")
-        keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'Histone')
+    keep_mask = get_keep_mask(args, beluga_features_df)
 
     input_features_df = beluga_features_df[keep_mask]
     input_features_df['cluster'] = labels

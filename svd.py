@@ -13,6 +13,8 @@ import glob
 from sklearn.decomposition import TruncatedSVD
 from joblib import dump, load
 
+from cluster_utils import get_keep_mask
+
 
 def main():
     parser = argparse.ArgumentParser(description='Compute SVD')
@@ -31,6 +33,9 @@ def main():
     parser.add_argument('--intersect_with_lambert', action='store_true',
                         dest='intersect_with_lambert', default=False,
                         help='intersect with Lambert2018_TFs_v_1.01_curatedTFs.csv')
+    parser.add_argument('--no_pol2', action='store_true',
+                        dest='no_pol2', default=False,
+                        help='take out Pol2*')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_svd',
                         help='Output directory')
     args = parser.parse_args()
@@ -60,24 +65,7 @@ def main():
     beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df[
         'Assay'] + '/' + beluga_features_df['Cell type']
 
-    keep_mask = np.ones(beluga_features_df.shape[0], dtype=bool)
-
-    if args.no_tf_features:
-        print("not including TF features")
-        keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'TF')
-
-    if args.no_dnase_features:
-        print("not including DNase features")
-        keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'DNase')
-
-    if args.no_histone_features:
-        print("not including histone features")
-        keep_mask = keep_mask & (beluga_features_df['Assay type'] != 'Histone')
-
-    if args.intersect_with_lambert:
-        print("intersecting with Lambert data")
-        lambert_df = pd.read_csv('./resources/Lambert2018_TFs_v_1.01_curatedTFs.csv', index_col=0)
-        keep_mask = keep_mask & (beluga_features_df['Assay'].isin(lambert_df['HGNC symbol']))
+    keep_mask = get_keep_mask(args, beluga_features_df)
 
     keep_indices = np.nonzero(keep_mask.values)[0]
     tracks = tracks[keep_indices]
