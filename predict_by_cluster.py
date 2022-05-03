@@ -1,27 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Predict variant expression effects
-
-This script takes the predicted chromatin effects computed by chromatin.py and
-expression model file list, and predicts expression effects in all models provided
-in the model list.
-
-Example:
-        $ python predict.py --coorFile ./example/example.vcf --geneFile ./example/example.vcf.bed.sorted.bed.closestgene --snpEffectFilePattern ./example/example.vcf.shift_SHIFT.diff.h5 --modelList ./resources/modellist --output output.csv
-For very large input files use the split functionality to distribute the
-prediction into multiple runs. For example, `--splitFlag --splitIndex 0 --splitFold 10`
-will divide the input into 10 chunks and process only the first chunk.
-
-"""
 import argparse
-import xgboost as xgb
-import pandas as pd
-import numpy as np
-import h5py
-from numpy.ma.core import get_mask
-from six.moves import reduce
 import os
+
+import h5py
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import xgboost as xgb
 from matplotlib.cm import get_cmap
+from six.moves import reduce
 
 from cluster_utils import get_keep_mask
 
@@ -31,8 +18,8 @@ parser.add_argument('--geneFile', action="store",
                     dest="geneFile")
 parser.add_argument('--snpEffectFilePattern', action="store", dest="snpEffectFilePattern",
                     help="SNP effect hdf5 filename pattern. Use SHIFT as placeholder for shifts.")
-parser.add_argument('--modelList', action="store", dest="modelList",
-                    help="A list of paths of binary xgboost model files (if end with .list) or a combined model file (if ends with .csv).")
+parser.add_argument('--model_save_file', action="store", dest="model",
+                    help="Save file containing model to use for predictions")
 parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
                     help="tsv file denoting Beluga features")
 parser.add_argument('--feature_clusters_df', action="store", dest="feature_clusters_df",
@@ -40,14 +27,12 @@ parser.add_argument('--feature_clusters_df', action="store", dest="feature_clust
 
 parser.add_argument('--nfeatures', action="store",
                     dest="nfeatures", type=int, default=2002)
-parser.add_argument('-o', action="store", dest="out_dir")
 parser.add_argument('--fixeddist', action="store",
                     dest="fixeddist", default=0, type=int)
 parser.add_argument('--maxshift', action="store",
                     dest="maxshift", type=int, default=800)
 parser.add_argument('--batchSize', action="store",
                     dest="batchSize", type=int, default=500)
-parser.add_argument('--splitFlag', action="store_true", default=False)
 parser.add_argument('--splitIndex', action="store",
                     dest="splitIndex", type=int, default=0)
 parser.add_argument('--splitFold', action="store",
@@ -71,6 +56,7 @@ parser.add_argument('--no_pol2', action='store_true',
                     dest='no_pol2', default=False,
                     help='take out Pol2*')
 
+parser.add_argument('-o', action="store", dest="out_dir")
 args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
@@ -123,7 +109,7 @@ def interpret_model_with_clusters(model, ref_features, alt_features, clusters):
     return cluster_contribs_proportion
 
 
-def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_models, maxshift=800, nfeatures=2002, batchSize=500,old_format=False):
+def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, model, maxshift=800, nfeatures=2002, batchSize=500):
     """Compute expression effects (log fold-change).
 
     Args:
@@ -165,10 +151,11 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
      ]).T for dist in [0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, maxshift + 1, 200))]
     n_snps = len(snpdists)
 
-    ref = np.zeros((n_snps, len(all_models)))
-    alt = np.zeros((n_snps, len(all_models)))
-    effect = np.zeros((n_snps, len(all_models)))
-    cluster_proportions = np.zeros((n_snps, len(np.unique(clusters)), len(all_models)))
+    ref = np.zeros(n_snps)
+    alt = np.zeros(n_snps)
+    effect = np.zeros(n_snps)
+    cluster_proportions = np.zeros((n_snps, len(np.unique(clusters))))
+    preds_per_feature_proportion = np.zeros((n_snps, n_marks))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
         print("Processing " + str(i) + "th batch of "+str(batchSize))
@@ -199,49 +186,30 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
         diff = diff.reshape(diff.shape[0], 10, 2002)[:, :, keep_indices].reshape(
             diff.shape[0], -1)
 
-        preds_per_feature_proportion = np.zeros((n_snps, n_marks, len(all_models)))
 
-        if old_format:
-            # backward compatibility
-            diff = np.concatenate([np.zeros((diff.shape[0], 10, 1)), diff.reshape(
-                (-1, 10, 2002))], axis=2).reshape((-1, 20030))
         dtest_ref = xgb.DMatrix(diff * 0)
         dtest_alt = xgb.DMatrix(diff)
 
         dtest_ref_preds = xgb.DMatrix(ref_features)
         dtest_alt_preds = xgb.DMatrix(alt_features)
 
-        for j in range(len(all_models)):
-            model = all_models[j]
-            effect[i * batchSize:(i + 1) * batchSize, j] = model.predict(dtest_ref) - \
-                                                           model.predict(dtest_alt)
+        effect[i * batchSize:(i + 1) * batchSize] = model.predict(dtest_ref) - \
+                                                       model.predict(dtest_alt)
 
-            ref[i * batchSize:(i + 1) * batchSize, j] = model.predict(dtest_ref_preds)
-            alt[i * batchSize:(i + 1) * batchSize, j] = model.predict(dtest_alt_preds)
+        ref[i * batchSize:(i + 1) * batchSize] = model.predict(dtest_ref_preds)
+        alt[i * batchSize:(i + 1) * batchSize] = model.predict(dtest_alt_preds)
 
-            preds_per_feature_proportion[i * batchSize:(i + 1) * batchSize, :, j] = \
-                interpret_model(model, ref_features, alt_features)
+        preds_per_feature_proportion[i * batchSize:(i + 1) * batchSize, :] = \
+            interpret_model(model, ref_features, alt_features)
 
-            cluster_proportions[i * batchSize:(i + 1) * batchSize, :, j] = \
-                interpret_model_with_clusters(model, ref_features, alt_features, clusters)
-
+        cluster_proportions[i * batchSize:(i + 1) * batchSize, :] = \
+            interpret_model_with_clusters(model, ref_features, alt_features, clusters)
 
     return effect, ref, alt, preds_per_feature_proportion, cluster_proportions
 
 #load resources
-modelList = pd.read_csv(args.modelList,sep='\t',header=0)
-models = []
-for file in modelList['ModelName']:
-        bst = xgb.Booster({'nthread': args.threads})
-        bst.load_model(file.strip())
-        models.append(bst)
-
-# backward compatibility with earlier model format
-if len(bst.get_dump()[0].split('\n')) == 20034:
-    old_format = True
-else:
-    old_format = False
-
+model = xgb.Booster({'nthread': args.threads})
+model.load_model(args.model_save_file.strip())
 
 #load input data
 maxshift = int(args.maxshift)
@@ -258,14 +226,8 @@ for shift in [str(n) for n in [0, ] + list(range(-200, -maxshift - 1, -200)) + l
     h5f_alt = h5py.File(args.snpEffectFilePattern.replace(
         'SHIFT', shift), 'r')['alt']
 
-    if args.splitFlag:
-        index_start = int((args.splitIndex - 1) *
-                          np.ceil(float(h5f_diff.shape[0] / 2) / args.splitFold))
-        index_end = int(np.minimum(
-            (args.splitIndex) * np.ceil(float(h5f_diff.shape[0] / 2) / args.splitFold), (h5f_diff.shape[0] / 2)))
-    else:
-        index_start = 0
-        index_end = int(h5f_diff.shape[0] / 2)
+    index_start = 0
+    index_end = int(h5f_diff.shape[0] / 2)
 
     snp_temp = (np.asarray(h5f_diff[index_start:index_end, :]) + np.asarray(h5f_diff[index_start + int(h5f_diff.shape[0] / 2):index_end + int(h5f_diff.shape[0] / 2), :])) / 2.0
     snp_temp_ref = (np.asarray(h5f_ref[index_start:index_end, :]) + np.asarray(
@@ -313,9 +275,9 @@ strand= np.asarray(gene.iloc[geneinds,-3])
 # compute expression effects
 snpExpEffects, ref, alt, preds_per_feature_proportion, cluster_proportions = compute_effects(snpEffects, ref_preds, alt_preds,
                                                                         dist, strand,
-                                                                        models, maxshift=maxshift,
+                                                                        model, maxshift=maxshift,
                                                                         nfeatures=args.nfeatures,
-                                                                        batchSize=args.batchSize,old_format=old_format)
+                                                                        batchSize=args.batchSize)
 #write output
 snpExpEffects_df = coor
 snpExpEffects_df['dist'] = dist

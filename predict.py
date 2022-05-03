@@ -17,11 +17,13 @@ import xgboost as xgb
 import pandas as pd
 import numpy as np
 import h5py
+from numpy.ma.core import get_mask
 from six.moves import reduce
 import os
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
 
+from cluster_utils import get_keep_mask
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--coorFile', action="store", dest="coorFile")
@@ -33,6 +35,9 @@ parser.add_argument('--modelList', action="store", dest="modelList",
                     help="A list of paths of binary xgboost model files (if end with .list) or a combined model file (if ends with .csv).")
 parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
                     help="tsv file denoting Beluga features")
+parser.add_argument('--feature_clusters_df', action="store", dest="feature_clusters_df",
+                    help="tsv file for clustered features")
+
 parser.add_argument('--nfeatures', action="store",
                     dest="nfeatures", type=int, default=2002)
 parser.add_argument('-o', action="store", dest="out_dir")
@@ -49,22 +54,43 @@ parser.add_argument('--splitFold', action="store",
                     dest="splitFold", type=int, default=10)
 parser.add_argument('--threads', action="store", dest="threads",
                     type=int, default=16, help="Number of threads.")
+
+parser.add_argument('--no_tf_features', action='store_true',
+                    dest='no_tf_features', default=False,
+                    help='leave out TF marks for training')
+parser.add_argument('--no_dnase_features', action='store_true',
+                    dest='no_dnase_features', default=False,
+                    help='leave out DNase marks for training')
+parser.add_argument('--no_histone_features', action='store_true',
+                    dest='no_histone_features', default=False,
+                    help='leave out histone marks for training')
+parser.add_argument('--intersect_with_lambert', action='store_true',
+                    dest='intersect_with_lambert', default=False,
+                    help='intersect with Lambert2018_TFs_v_1.01_curatedTFs.csv')
+parser.add_argument('--no_pol2', action='store_true',
+                    dest='no_pol2', default=False,
+                    help='take out Pol2*')
+
 args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
 
-# input_features_df = pd.read_csv('output_dir/interpret_features_grouped/all_feature_clusters.tsv', sep='\t', index_col=0)
-input_features_df = pd.read_csv('output_dir/cluster_and_viz_louvain/tf_lambert/all_feature_clusters.tsv', sep='\t', index_col=0)
-clusters = input_features_df['cluster']
+feature_clusters_df = pd.read_csv(args.feature_clusters_df, sep='\t', index_col=0)
+clusters = feature_clusters_df['cluster']
+
+# Interpret SED scores
+beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
+beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df['Assay'] + '/' + beluga_features_df['Cell type']
 
 
 def interpret_model(model, ref_features, alt_features):
     dump = model.get_dump()[0].strip('\n').split('\n')
     bias = float(dump[1])
     weights = np.array(list(map(float, dump[3:])))
+
     preds_per_feature = (weights * (alt_features - ref_features))  # omit bias term because of difference
     preds_per_feature = preds_per_feature.ravel()\
-        .reshape(preds_per_feature.shape[0], 10, 2002)\
+        .reshape(preds_per_feature.shape[0], 10, preds_per_feature.shape[1] // 10)\
         .transpose(0, 2, 1)  # (n_snps, n_chromatin_marks, n_features_per_mark)
 
     preds_per_feature = preds_per_feature.sum(axis=-1)  # sum over exponential basis function contributions
@@ -80,13 +106,16 @@ def interpret_model_with_clusters(model, ref_features, alt_features, clusters):
     dump = model.get_dump()[0].strip('\n').split('\n')
     bias = float(dump[1])
     weights = np.array(list(map(float, dump[3:])))
+
     preds_per_feature = (weights * (alt_features - ref_features))  # omit bias term because of difference
     preds_per_feature = preds_per_feature.ravel()\
-        .reshape(preds_per_feature.shape[0], 10, 2002)\
+        .reshape(preds_per_feature.shape[0], 10, preds_per_feature.shape[1] // 10)\
         .transpose(0, 2, 1)  # (n_snps, n_chromatin_marks, n_features_per_mark)
 
     preds_per_feature_df = pd.DataFrame(preds_per_feature.reshape(preds_per_feature.shape[0], -1).T)  # (n_input_features, n_snps)
-    preds_per_feature_df['cluster'] = clusters
+    cluster_labels = np.repeat(clusters.values, 10)
+    assert cluster_labels.shape[0] == preds_per_feature_df.shape[0], "cluster labels and output preds df should match shape"
+    preds_per_feature_df['cluster'] = cluster_labels
     cluster_contribs = preds_per_feature_df.groupby('cluster').sum().values.T
 
     cluster_contribs_proportion = cluster_contribs / cluster_contribs.sum(axis=-1, keepdims=True)
@@ -139,7 +168,6 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
     ref = np.zeros((n_snps, len(all_models)))
     alt = np.zeros((n_snps, len(all_models)))
     effect = np.zeros((n_snps, len(all_models)))
-    preds_per_feature_proportion = np.zeros((n_snps, nfeatures, len(all_models)))
     cluster_proportions = np.zeros((n_snps, len(np.unique(clusters)), len(all_models)))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
@@ -159,6 +187,19 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
 
         alt_features = reduce(lambda x, y: x + y, [np.tile(np.asarray(alt_preds[j][i * batchSize:(i + 1) * batchSize, :]), 10)
                                  * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
+
+        # adjust for training on subset of tracks
+        keep_mask = get_keep_mask(args, beluga_features_df)
+        keep_indices = np.nonzero(keep_mask)[0]
+        n_marks = np.sum(keep_mask)
+        alt_features = alt_features.reshape(alt_features.shape[0], 10, 2002)[:, :, keep_indices].reshape(
+            alt_features.shape[0], -1)
+        ref_features = ref_features.reshape(ref_features.shape[0], 10, 2002)[:, :, keep_indices].reshape(
+            ref_features.shape[0], -1)
+        diff = diff.reshape(diff.shape[0], 10, 2002)[:, :, keep_indices].reshape(
+            diff.shape[0], -1)
+
+        preds_per_feature_proportion = np.zeros((n_snps, n_marks, len(all_models)))
 
         if old_format:
             # backward compatibility
@@ -274,19 +315,12 @@ snpExpEffects, ref, alt, preds_per_feature_proportion, cluster_proportions = com
                                                                         dist, strand,
                                                                         models, maxshift=maxshift,
                                                                         nfeatures=args.nfeatures,
-                                                                        batchSize=args.batchSize, old_format=old_format)
+                                                                        batchSize=args.batchSize,old_format=old_format)
 #write output
 snpExpEffects_df = coor
 snpExpEffects_df['dist'] = dist
 snpExpEffects_df['gene'] = genename
 snpExpEffects_df['strand'] = strand
-# snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
-#                               pd.DataFrame(ref, columns=list(map(lambda x: x + '_REF', modelList.iloc[:, 1]))),
-#                               pd.DataFrame(alt, columns=list(map(lambda x: x + '_ALT', modelList.iloc[:, 1]))),
-#                               pd.DataFrame(snpExpEffects, columns=list(map(lambda x: x + '_SED', modelList.iloc[:, 1])))
-#                               ],
-#                              axis=1,
-#                              ignore_index=False)
 
 snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
                               pd.DataFrame(ref, columns=['REF']),
@@ -297,6 +331,9 @@ snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
                              axis=1,
                              ignore_index=False)
 snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
+
+keep_mask = get_keep_mask(args, beluga_features_df)
+feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=beluga_features_df['Assay type + assay + cell type'][keep_mask])
 
 # Sort by magnitude of SNP effects
 snpExpEffects_df_sorted = snpExpEffects_df.copy()
@@ -310,47 +347,11 @@ snpExpEffects_df_sorted['SED_PROPORTION'] = np.abs(snpExpEffects_df_sorted['SED'
 snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_PROPORTION', axis=0, ascending=False)
 snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.csv', header=True, sep='\t', index=False)
 
-# Interpret SED scores
-beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
-beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df['Assay'] + '/' + beluga_features_df['Cell type']
-feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=beluga_features_df['Assay type + assay + cell type'])
-
 sed_feature_contributions_df = snpExpEffects_df.copy()
 sed_feature_contributions_df['SED_PROPORTION'] = np.abs(sed_feature_contributions_df['SED'] / ((sed_feature_contributions_df['REF'] + sed_feature_contributions_df['ALT']) / 2))
 sed_feature_contributions_df = pd.concat([sed_feature_contributions_df, feature_contributions_df], axis=1)
 sed_feature_contributions_df = sed_feature_contributions_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False).reset_index(drop=True)
 sed_feature_contributions_df.to_csv(f'{args.out_dir}/sed_sorted_by_proportion_with_contribs.csv', header=True, sep='\t', index=False)
-
-# Plotting
-# TODO: Plot top k genes
-# # TODO: Plot top m features by absolute value
-# k = 10
-# m = 10
-#
-# figures_dir = f'{args.out_dir}/figures'
-# os.makedirs(figures_dir, exist_ok=True)
-#
-# for i, row in sed_feature_contributions_df.iterrows():
-#     if i == k:
-#         break
-#     feature_contribs = row.iloc[16:]
-#     top_feature_contribs = feature_contribs.iloc[np.argsort(feature_contribs.apply(abs))[::-1][:m]]
-#
-#     plt.figure(figsize=(6.4, 8))
-#
-#     cmap = get_cmap("Set3")
-#     colors = (cmap.colors * int(np.ceil(m / len(cmap.colors))))[:m]
-#     plt.bar(range(m), top_feature_contribs, edgecolor='black', color=colors)
-#     rsid, gene = row.iloc[3], row.iloc[10]
-#     plt.title(f"{rsid} effect on {gene} by epigenomic feature contributions")
-#
-#     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(m)]
-#     labels = top_feature_contribs.index
-#     plt.legend(handles, labels, bbox_to_anchor=(-0.1, -0.15), loc='upper left', ncol=1, fontsize=10)
-#     plt.tight_layout()
-#     plt.savefig(f"{figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
-#     plt.show()
-
 
 # Plotting
 # TODO: Plot top k genes
@@ -364,37 +365,8 @@ sed_cluster_proportions_df = pd.concat([sed_cluster_proportions_df, cluster_prop
 sed_cluster_proportions_df = sed_cluster_proportions_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False).reset_index(drop=True)
 sed_cluster_proportions_df.to_csv(f'{args.out_dir}/cluster_contribs.csv', header=True, sep='\t', index=False)
 
-k = 10
-
-cluster_proportions = cluster_proportions.squeeze()
 cluster_figures_dir = f'{args.out_dir}/cluster_figures'
 os.makedirs(cluster_figures_dir, exist_ok=True)
-
-
-# for i, row in sed_feature_contributions_df.iterrows():
-#     if i == k:
-#         break
-#     feature_contribs = row.iloc[16:]
-#     top_feature_contribs = feature_contribs.iloc[np.argsort(feature_contribs.apply(abs))[::-1][:m]]
-#
-#     plt.figure(figsize=(6.4, 8))
-
-#
-#     plt.figure(figsize=(6.4, 8))
-#
-#     cmap = get_cmap("Set3")
-#     colors = (cmap.colors * int(np.ceil(m / len(cmap.colors))))[:m]
-#     plt.bar(range(m), top_feature_contribs, edgecolor='black', color=colors)
-#     rsid, gene = row.iloc[3], row.iloc[10]
-#     plt.title(f"{rsid} effect on {gene} by epigenomic feature contributions")
-#
-#     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[c]) for c in range(m)]
-#     labels = top_feature_contribs.index
-#     plt.legend(handles, labels, bbox_to_anchor=(-0.1, -0.15), loc='upper left', ncol=1, fontsize=10)
-#     plt.tight_layout()
-#     plt.savefig(f"{figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
-#     plt.show()
-
 
 k = 10  # num_snps to plot
 m = 10  # num_clusters to plot
@@ -418,4 +390,3 @@ for i, row in sed_cluster_proportions_df.iterrows():
     plt.tight_layout()
     plt.savefig(f"{cluster_figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
     plt.show()
-
