@@ -58,7 +58,6 @@ def main():
     vcf_df = vcf_df.drop_duplicates()   # drop duplicated SNPs since they were taken from top eQTLs
 
     eqtls_df = eur_top_eqtl_genes_df.merge(vcf_df, left_index=True, right_index=True, validate='m:1', how='inner')  # why are we losing SNPs here as opposed to a left join?
-    eqtls_df = eqtls_df[eqtls_df['gene_symbol'].isin(list(map(lambda x: x.upper(), ['flvcr1-dt', 'klh17-dt', 'pex6', 'slfn5', 'snhg5', 'tlr10'])))]
     num_eqtls = eqtls_df.shape[0]
 
     # evaluate
