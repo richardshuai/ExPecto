@@ -73,12 +73,17 @@ def main():
     seqs_gen = seqs_to_predict(eqtls_df, consensus_dir)
 
     for i in tqdm(range(num_eqtls)):
+        strand = eqtls_df.iloc[i].loc['strand']
+
         # Predict on reference
         ref_id, ref_seq = next(seqs_gen)
+        if strand == '-':
+            # TODO: needed due to ref seq glitch not properly reverse complemented
+            ref_seq = reverse_complement(ref_seq)
+
         record_ids.append(ref_id)
         genes.append(eqtls_df.iloc[i].loc['gene_symbol'])
 
-        strand = eqtls_df.iloc[i].loc['strand']
         seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(ref_seq, strand, shifts)).astype(np.float32)
         ref_preds = np.zeros((seq_shifts.shape[0], 2002))
         for i in range(0, seq_shifts.shape[0], args.batch_size):
@@ -92,6 +97,10 @@ def main():
 
         # Predict on alternate
         alt_seq = next(seqs_gen)
+
+        if strand == '-':
+            # TODO: needed due to ref seq glitch not properly reverse complemented
+            alt_seq = reverse_complement(alt_seq)
 
         seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(alt_seq, strand, shifts)).astype(np.float32)
         alt_preds = np.zeros((seq_shifts.shape[0], 2002))
@@ -196,7 +205,7 @@ def seqs_to_predict(eqtls_df, consensus_dir):
             tss_i = seq_length // 2 - 1
         else:
             tss_i = seq_length // 2
-        snp_i = int(tss_i - (eqtl['TSSpos'] - eqtl['SNP_POS'])) + 1
+        snp_i = int(tss_i - (eqtl['TSSpos'] - eqtl['SNP_POS']))
 
         assert ref_seq[snp_i] == ref_allele, "Ref sequence does not match ref allele"
         alt_seq = ref_seq[:snp_i] + alt_allele + ref_seq[snp_i + 1:]
