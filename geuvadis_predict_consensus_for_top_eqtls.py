@@ -78,10 +78,12 @@ def main():
         os.makedirs(preds_dir, exist_ok=True)
 
         fasta_record_ids = []
+        sample_seqs = []
         sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_gz)
         preds = []
         for sample_seq, record_id in sample_seqs_gen:
             strand = record_id.split('|')[-2]
+            sample_seqs.append(get_sample_seq_for_expecto(sample_seq, strand, shifts))
             seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
 
             sample_preds = np.zeros((seq_shifts.shape[0], 2002))
@@ -96,7 +98,6 @@ def main():
             preds.append(sample_preds)
 
         preds = np.stack(preds, axis=0)
-        # assert preds.shape == (len(fasta_record_ids), shifts.shape[0], 2002)
 
         pos_weight_shifts = shifts
         pos_weights = np.vstack([
@@ -117,36 +118,10 @@ def main():
 
         expecto_preds = bst.predict(expecto_features)
 
-
-        # genes_file = '/home/rshuai/research/ni-lab/analysis/geuvadis_data/eur_eqtl_genes_converted.csv'
-        # geuvadis_expression_file = '/home/rshuai/research/ni-lab/analysis/geuvadis_data/GD462.GeneQuantRPKM.50FN.samplename.resk10.txt'
-        #
-        # genes_df = pd.read_csv(genes_file, names=['ens_id', 'chrom', 'bp', 'gene_symbol', 'strand'], index_col=False)
-        # genes_df['gene_symbol'] = genes_df['gene_symbol'].fillna(genes_df['ens_id'])
-        # genes_df = genes_df.set_index('gene_symbol')
-
-        # Read Geuvadis data
-        # geuvadis_exp_df = pd.read_csv(geuvadis_expression_file, sep='\t')
-        # geuvadis_exp_df['Gene_Symbol'] = geuvadis_exp_df['Gene_Symbol'].apply(lambda x: x.split('.')[0])  # Ensembl IDs
-        # geuvadis_exp_df = geuvadis_exp_df.rename({'Gene_Symbol': 'ens_id'}, axis=1)
-        #
-        # preds_ti = expecto_preds
-        # preds_df = pd.DataFrame({'record_ids': fasta_record_ids, 'preds': preds_ti})
-        # records_df = pd.DataFrame(preds_df['record_ids'].str.split('|').values.tolist(),
-        #                           columns=['chrom:pos', 'sample', 'strand', 'haplotype'])
-        # preds_df['sample'] = records_df['sample']
-        # preds_df = preds_df.groupby('sample')['preds'].mean().reset_index()
-        # gene_exp = geuvadis_exp_df[geuvadis_exp_df['ens_id'] == genes_df.loc[gene.upper()]['ens_id']].T.iloc[4:].astype(float)
-        # preds_df = preds_df.merge(gene_exp, how='inner', left_on='sample', right_index=True, validate='1:1')
-        # plot_preds(np.log(preds_df.iloc[:, -1]).values, preds_df['preds'].values,
-        #            title='ExPecto Predictions vs. Geuvadis',
-        #            xlabel='log(Geuvadis)',
-        #            ylabel='log(prediction)',
-        #            out_dir=f'{args.out_dir}/expecto_pred_vs_geuvadis.png')
-
         with h5py.File(f'{preds_dir}/{gene}.h5', 'w') as preds_h5:
             preds_h5.create_dataset('preds', data=expecto_preds)
             preds_h5.create_dataset('record_ids', data=np.array(fasta_record_ids, 'S'))
+            preds_h5.create_dataset('seqs', data=np.array(sample_seqs, 'S'))
 
 
 def gen_sample_seqs_and_id_for_gene(fasta_gz):
@@ -159,6 +134,18 @@ def gen_sample_seqs_and_id_for_gene(fasta_gz):
         for record in SeqIO.parse(f, 'fasta'):
             seq = str(record.seq).upper()
             yield seq, record.id
+
+
+def get_sample_seq_for_expecto(basenji_seq, strand, shifts, windowsize=2000):
+    if strand == '+':
+        tss_i = (len(basenji_seq) - 1) // 2
+        seq = basenji_seq[min(tss_i + shifts - int(windowsize / 2 - 1)):max(tss_i + shifts + int(windowsize / 2) + 1)]
+    else:
+        tss_i = len(basenji_seq) // 2
+        seq = basenji_seq[min(tss_i + shifts*-1 - int(windowsize / 2 - 1)):max(tss_i + shifts*-1 + int(windowsize / 2) + 1)]
+
+    assert len(seq) == 41800, "length of sequence should be 41800 to match ExPecto receptive field"
+    return seq
 
 
 def get_seq_shifts_for_sample_seq(sample_seq, strand, shifts, windowsize=2000):
