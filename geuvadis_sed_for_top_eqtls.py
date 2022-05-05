@@ -196,7 +196,7 @@ def seqs_to_predict(eqtls_df, consensus_dir):
             tss_i = seq_length // 2 - 1
         else:
             tss_i = seq_length // 2
-        snp_i = int(tss_i - (eqtl['TSSpos'] - eqtl['SNP_POS']))
+        snp_i = int(tss_i - (eqtl['TSSpos'] - eqtl['SNP_POS'])) + 1
 
         assert ref_seq[snp_i] == ref_allele, "Ref sequence does not match ref allele"
         alt_seq = ref_seq[:snp_i] + alt_allele + ref_seq[snp_i + 1:]
@@ -204,6 +204,11 @@ def seqs_to_predict(eqtls_df, consensus_dir):
         # print(f"Reference sequence surrounding SNP: {ref_seq[snp_i-5:snp_i]}*{ref_seq[snp_i]}*{ref_seq[snp_i + 1:snp_i+6]}")
         # print(f"Alternate sequence surrounding SNP: {alt_seq[snp_i - 5:snp_i]}*{alt_seq[snp_i]}*{alt_seq[snp_i + 1:snp_i + 6]}")
         yield alt_seq
+
+
+def reverse_complement(x):
+    complements = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
+    return ''.join(list(map(complements.get, list(x)))[::-1])
 
 
 if __name__ == '__main__':
