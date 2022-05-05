@@ -79,7 +79,7 @@ def main():
         ref_id, ref_seq = next(seqs_gen)
         if strand == '-':
             # TODO: needed due to ref seq glitch not properly reverse complemented
-            ref_seq = reverse_complement(ref_seq)
+            ref_seq = reverse_complement(ref_seq.upper())
 
         record_ids.append(ref_id)
         genes.append(eqtls_df.iloc[i].loc['gene_symbol'])
@@ -100,7 +100,7 @@ def main():
 
         if strand == '-':
             # TODO: needed due to ref seq glitch not properly reverse complemented
-            alt_seq = reverse_complement(alt_seq)
+            alt_seq = reverse_complement(alt_seq.upper())
 
         seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(alt_seq, strand, shifts)).astype(np.float32)
         alt_preds = np.zeros((seq_shifts.shape[0], 2002))
@@ -216,7 +216,7 @@ def seqs_to_predict(eqtls_df, consensus_dir):
 
 
 def reverse_complement(x):
-    complements = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
+    complements = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
     return ''.join(list(map(complements.get, list(x)))[::-1])
 
 
