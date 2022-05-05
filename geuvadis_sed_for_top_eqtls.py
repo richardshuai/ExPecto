@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from Beluga import Beluga
 from expecto_utils import encodeSeqs
-
+import shutil
 
 def main():
     parser = argparse.ArgumentParser(description='Predict expression for consensus sequences using ExPecto')
@@ -31,6 +31,9 @@ def main():
     consensus_dir = args.consensus_dir
     eqtls_df_file = args.eqtls_df_file
     snps_vcf = args.snps_vcf
+
+    # preserve vcf file
+    shutil.copy(snps_vcf, f'{args.out_dir}/snps.vcf')
 
     # Setup
     os.makedirs(args.out_dir, exist_ok=True)
@@ -64,6 +67,7 @@ def main():
     shifts = np.array(list(range(-20000, 20000, 200)))
 
     record_ids = []
+    genes = []
     beluga_ref_preds = []
     beluga_alt_preds = []
     seqs_gen = seqs_to_predict(eqtls_df, consensus_dir)
@@ -72,6 +76,7 @@ def main():
         # Predict on reference
         ref_id, ref_seq = next(seqs_gen)
         record_ids.append(ref_id)
+        genes.append(eqtls_df.iloc[i].loc['gene_symbol'])
 
         strand = eqtls_df.iloc[i].loc['strand']
         seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(ref_seq, strand, shifts)).astype(np.float32)
@@ -129,6 +134,7 @@ def main():
         preds_h5.create_dataset('ref_preds', data=expecto_ref_preds)
         preds_h5.create_dataset('alt_preds', data=expecto_alt_preds)
         preds_h5.create_dataset('record_ids', data=np.array(record_ids, 'S'))
+        preds_h5.create_dataset('genes', data=np.array(genes, 'S'))
 
 
 def get_1_id_and_seq_from_fasta(fasta_file):
