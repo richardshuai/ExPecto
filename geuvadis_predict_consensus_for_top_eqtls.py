@@ -67,7 +67,10 @@ def main():
 
     # evaluate
     shifts = np.array(list(range(-20000, 20000, 200)))
-    genes = eqtls_df['gene_symbol']
+    # genes = eqtls_df['gene_symbol']
+
+    # highly variable genes and lowly variable genes
+    genes = ['HLA-B', 'HLA-C', 'RPL28', 'CPAMD8', 'TMEM121B', 'SCN11A']
 
     print("Predicting chromatin for all samples for all genes...")
     for gene in tqdm(genes):
