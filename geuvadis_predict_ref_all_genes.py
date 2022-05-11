@@ -58,8 +58,6 @@ def main():
 
         # Predict on reference
         gene = gene.lower()
-        if gene not in ['znf681', 'snhg5', 'tlr10']:
-            continue
         ref_fasta = f'{consensus_dir}/{gene}/ref_roi.fa'
         ref_id, ref_seq = get_1_id_and_seq_from_fasta(ref_fasta)
 
@@ -98,7 +96,7 @@ def main():
 
         expecto_ref_preds.append(bst.predict(expecto_ref_features))
 
-    expecto_ref_preds = np.array(expecto_ref_preds)
+    expecto_ref_preds = np.array(expecto_ref_preds).squeeze()
 
     # compute log transform
     expecto_ref_preds = np.exp(expecto_ref_preds) - 0.0001  # invert log transform from ExPecto
