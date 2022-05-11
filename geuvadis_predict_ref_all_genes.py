@@ -104,7 +104,7 @@ def main():
     expecto_ref_preds = np.exp(expecto_ref_preds) - 0.0001  # invert log transform from ExPecto
     expecto_ref_preds = np.log10(expecto_ref_preds + 0.1)
 
-    df = pd.DataFrame({"genes": np.array(genes_df.genes.values), "ref_preds": expecto_ref_preds})
+    df = pd.DataFrame({"genes": np.array(genes_df.index.values), "ref_preds": expecto_ref_preds})
     df.to_csv(f'{args.out_dir}/ref_preds.csv', header=True, index=False)
 
     # with h5py.File(f'{args.out_dir}/preds.h5', 'w') as preds_h5:
