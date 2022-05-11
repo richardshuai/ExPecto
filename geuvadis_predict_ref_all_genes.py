@@ -104,11 +104,13 @@ def main():
     expecto_ref_preds = np.exp(expecto_ref_preds) - 0.0001  # invert log transform from ExPecto
     expecto_ref_preds = np.log10(expecto_ref_preds + 0.1)
 
+    df = pd.DataFrame({"genes": np.array(genes_df.genes.values), "ref_preds": expecto_ref_preds})
+    df.to_csv(f'{args.out_dir}/ref_preds.csv', header=True, index=False)
 
-    with h5py.File(f'{args.out_dir}/preds.h5', 'w') as preds_h5:
-        preds_h5.create_dataset('ref_preds', data=expecto_ref_preds)
-        preds_h5.create_dataset('record_ids', data=np.array(record_ids, 'S'))
-        preds_h5.create_dataset('genes', data=np.array(genes_df.index.values, 'S'))
+    # with h5py.File(f'{args.out_dir}/preds.h5', 'w') as preds_h5:
+    #     preds_h5.create_dataset('ref_preds', data=expecto_ref_preds)
+    #     preds_h5.create_dataset('record_ids', data=np.array(record_ids, 'S'))
+    #     preds_h5.create_dataset('genes', data=np.array(genes_df.index.values, 'S'))
 
 
 def get_1_id_and_seq_from_fasta(fasta_file):
