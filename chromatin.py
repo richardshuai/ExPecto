@@ -209,7 +209,7 @@ def fetchSeqs(chr, pos, ref, alt, shift=0, inputsize=2000):
 
 
 vcf = pd.read_csv(inputfile, sep='\t', header=None, comment='#',
-                  names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]).iloc[:2000]  # TODO: REMOVE THIS
+                  names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"])
 
 # lift over to hg19 if necessary
 if args.hg38:
