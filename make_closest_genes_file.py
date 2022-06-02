@@ -39,7 +39,7 @@ def main():
                                             'tss_chrom', 'tss_pos_start', 'tss_pos', 'tss_strand', 'ens_id',
                                             'dist_to_tss'))
     idx = 0
-    for _, row in vcf.iterrows():
+    for _, row in tqdm(vcf.iterrows(), total=vcf.shape[0]):
         snp_chrom, snp_pos, ref, alt = row[0], row[1], row[3], row[4]
 
         # Get closest gene to SNP
