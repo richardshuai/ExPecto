@@ -11,15 +11,16 @@ Example:
 """
 import argparse
 import math
-import pyfasta
-import torch
-from torch import nn
+import os
+
+import h5py
 import numpy as np
 import pandas as pd
-import h5py
-import os
+import pyfasta
+import torch
 from liftover import get_lifter
-
+from torch import nn
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='Predict variant chromatin effects')
 parser.add_argument('inputfile', type=str, help='Input file in vcf format')
@@ -40,6 +41,7 @@ args = parser.parse_args()
 genome = pyfasta.Fasta('./resources/hg19.fa')
 os.makedirs(args.output_dir, exist_ok=True)
 
+FAILED_LIFTOVER_VALUE = -1
 
 if args.hg38:
     converter = get_lifter('hg38', 'hg19')  # need to liftover from hg38 to hg19
@@ -113,13 +115,19 @@ windowsize = inputsize + 100
 
 
 def liftover_to_hg19(row):
+    """
+    Given pandas Series from vcf, return row with the hg38 pos lifted over to hg19. If we cannot liftover the variant
+    successfully, return -1 for chrom and pos in the row.
+    """
     chrom_hg38, pos_hg38 = row[0], row[1]
     hg19_coords = converter.convert_coordinate(chrom_hg38, pos_hg38)
 
+    assert len(hg19_coords) <= 1, f"hg38 to hg19 conversion returned multiple entries for {chrom_hg38}, bp {pos_hg38}"
+
     if len(hg19_coords) == 0:
-        assert False, f'Failed to lift over hg38 variant at {chrom_hg38}, bp {pos_hg38} to hg19'
-    assert len(hg19_coords) == 1, f"hg38 to hg19 conversion returned multiple entries for {chrom_hg38}, bp {pos_hg38}"
-    chrom_hg19, pos_hg19, _ = hg19_coords[0]
+        chrom_hg19, pos_hg19 = FAILED_LIFTOVER_VALUE, FAILED_LIFTOVER_VALUE
+    else:
+        chrom_hg19, pos_hg19, _ = hg19_coords[0]
     row[0], row[1] = chrom_hg19, pos_hg19
     return row
 
@@ -196,23 +204,35 @@ def fetchSeqs(chr, pos, ref, alt, shift=0, inputsize=2000):
     return seq[:mutpos] + ref + seq[(mutpos + len(ref)):], seq[:mutpos] + alt + seq[(mutpos + len(ref)):], seq[mutpos:(mutpos + len(ref))].upper() == ref.upper()
 
 
-vcf = pd.read_csv(inputfile, sep='\t', header=None, comment='#')
+vcf = pd.read_csv(inputfile, sep='\t', header=None, comment='#',
+                  names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"])
 
 # lift over to hg19 if necessary
 if args.hg38:
-    vcf = vcf.apply(liftover_to_hg19, axis=1)
+    print("Lifting over to hg38...")
+    tqdm.pandas()
+    vcf_lifted = vcf.progress_apply(liftover_to_hg19, axis=1)
+
+    # Write variants not lifted over to VCF
+    failed_liftover_mask = (vcf_lifted['POS'] == FAILED_LIFTOVER_VALUE)
+    variants_not_lifted = vcf[failed_liftover_mask]
+    print(f"Failed to lift {variants_not_lifted.shape[0]} variants from hg38 to hg19")
+    variants_not_lifted.to_csv(f"{args.output_dir}/not_lifted.vcf", sep='\t', header=False, index=False)
+
+    # Subset to lifted variants
+    vcf = vcf[~failed_liftover_mask]
 
 # standardize
 vcf.iloc[:, 0] = 'chr' + vcf.iloc[:, 0].map(str).str.replace('chr', '')
 vcf = vcf[vcf.iloc[:, 0].isin(CHRS)]
 
-for shift in [0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, maxshift + 1, 200)):
+for shift in tqdm([0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, maxshift + 1, 200))):
     refseqs = []
     altseqs = []
     ref_matched_bools = []
     for i in range(vcf.shape[0]):
         refseq, altseq, ref_matched_bool = fetchSeqs(
-            vcf[0][i], vcf[1][i], vcf[3][i], vcf[4][i], shift=shift, inputsize=inputsize)
+            vcf.iloc[i, 0], int(vcf.iloc[i, 1]), vcf.iloc[i, 3], vcf.iloc[i, 4], shift=shift, inputsize=inputsize)
         refseqs.append(refseq)
         altseqs.append(altseq)
         ref_matched_bools.append(ref_matched_bool)
@@ -239,7 +259,7 @@ for shift in [0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, ma
 
     alt_preds = []
     for i in range(int(1 + (alt_encoded.shape[0]-1) / batchSize)):
-        input = torch.from_numpy(alt_encoded[int(i*batchSize):int((i+1)*batchSize),:,:]).unsqueeze(2)
+        input = torch.from_numpy(alt_encoded[int(i*batchSize):int( (i+1)*batchSize),:,:]).unsqueeze(2)
         if args.cuda:
             input = input.cuda()
         alt_preds.append(model.forward(input).cpu().detach().numpy().copy())

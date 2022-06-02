@@ -46,4 +46,5 @@ def get_keep_mask(beluga_features_df, no_tf_features, no_dnase_features,
 
     if return_hgnc_df:
         return keep_mask, hgnc_df
+    print(f"Number of features included in model: {np.sum(keep_mask)}")
     return keep_mask
