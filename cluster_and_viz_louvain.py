@@ -66,8 +66,8 @@ def main():
         'Assay'] + '/' + beluga_features_df['Cell type']
 
     # account for ablations
-    keep_mask = get_keep_mask(args, beluga_features_df)
-
+    keep_mask = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2)
     input_features_df = beluga_features_df[keep_mask]
     input_features_df['cluster'] = labels
     input_features_df.to_csv(f'{args.out_dir}/all_feature_clusters.tsv', sep='\t')

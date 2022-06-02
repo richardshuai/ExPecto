@@ -14,19 +14,18 @@ Example:
 import argparse
 import os
 
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import xgboost as xgb
-from scipy.stats import spearmanr, pearsonr
+from scipy.stats import pearsonr
 from sklearn.metrics import r2_score
 
 from cluster_utils import get_keep_mask
 
 parser = argparse.ArgumentParser(description='Process some integers.')
-parser.add_argument('--targetIndex', action="store",
-                    dest="targetIndex", type=int)
 parser.add_argument('--expFile', action="store", dest="expFile")
 parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
                     help="tsv file denoting Beluga features")
@@ -50,13 +49,6 @@ parser.add_argument('--base_score', action="store",
                     dest="base_score", type=float, default=2)
 parser.add_argument('--threads', action="store",
                     dest="threads", type=int, default=16)
-parser.add_argument('--kidney_genes_only', action="store_true",
-                    dest="kidney_genes_only", default=False,
-                    help="If true, only use genes in our kidney data.")
-parser.add_argument('--match_with_basenji2', action='store_true',
-                    dest='match_with_basenji2', default=False,
-                    help='If true, only use genes in our cultured primary tubule data that are included in the Basenji2 '
-                         'gene predictor')
 parser.add_argument('--no_tf_features', action='store_true',
                     dest='no_tf_features', default=False,
                     help='leave out TF marks for training')
@@ -78,106 +70,112 @@ args = parser.parse_args()
 
 # Make model output dir
 os.makedirs(args.output_dir, exist_ok=True)
+model_dir = f'{args.output_dir}/models'
+os.makedirs(model_dir, exist_ok=True)
 
 # read resources
 Xreducedall = np.load(args.inputFile)
 geneanno = pd.read_csv('./resources/geneanno.csv')
 
-if args.filterStr == 'pc':
-    filt = np.asarray(geneanno.iloc[:, -1] == 'protein_coding')
-elif args.filterStr == 'lincRNA':
-    filt = np.asarray(geneanno.iloc[:, -1] == 'lincRNA')
-elif args.filterStr == 'all':
-    filt = np.asarray(geneanno.iloc[:, -1] != 'rRNA')
-else:
-    raise ValueError('filterStr has to be one of all, pc, and lincRNA')
-
 geneexp = pd.read_csv(args.expFile)
-print(f"Cell type: {geneexp.columns[args.targetIndex]}")
 
-filt = filt * \
-    np.isfinite(np.asarray(
-        np.log(geneexp.iloc[:, args.targetIndex] + args.pseudocount)))
+pearsonr_valids = []
+r2_valids = []
+pearsonr_trains = []
+r2_trains = []
 
-if args.kidney_genes_only:
-    print("Using only genes found in our kidney data...")
-    kidney_exp_df = pd.read_csv('./resources/geneanno.exp_kidney.csv', index_col=0)
-    filt = filt * ~np.array(np.any(kidney_exp_df.isnull(), axis=1))
+for ti in range(1, len(geneexp.columns)):
+    print(f"Cell type: {geneexp.columns[ti]}")
 
-if args.match_with_basenji2:
-    print("Using only genes found in our cultured primary tubule data...")
-    cultured_counts_file = '/home/rshuai/research/ni-lab/analysis/basenji2/tss/cultured_primary_tubule/representative_tss_top/tss.tsv'
-    cultured_counts_df = pd.read_csv(cultured_counts_file, sep='\t', index_col=0)
-    filt = filt * (geneanno['id'].isin(cultured_counts_df['ens_id']).values)
+    if args.filterStr == 'pc':
+        filt = np.asarray(geneanno.iloc[:, -1] == 'protein_coding')
+    elif args.filterStr == 'lincRNA':
+        filt = np.asarray(geneanno.iloc[:, -1] == 'lincRNA')
+    elif args.filterStr == 'all':
+        filt = np.asarray(geneanno.iloc[:, -1] != 'rRNA')
+    else:
+        raise ValueError('filterStr has to be one of all, pc, and lincRNA')
 
-# Ablations
-beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
-beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df[
-    'Assay'] + '/' + beluga_features_df['Cell type']
+    filt = filt * \
+        np.isfinite(np.asarray(
+            np.log(geneexp.iloc[:, ti] + args.pseudocount)))
 
-keep_mask = get_keep_mask(args, beluga_features_df)
-keep_indices = np.nonzero(keep_mask)[0]
-num_genes = Xreducedall.shape[0]
-Xreducedall = Xreducedall.reshape(num_genes, 10, 2002)[:, :, keep_indices].reshape(num_genes, -1)
+    # Ablations
+    beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
+    beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df[
+        'Assay'] + '/' + beluga_features_df['Cell type']
 
-print(f'Training data shape: {Xreducedall.shape}')
+    keep_mask = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2)
+    keep_indices = np.nonzero(keep_mask)[0]
+    num_genes = Xreducedall.shape[0]
+    Xreducedall = Xreducedall.reshape(num_genes, 10, 2002)[:, :, keep_indices].reshape(num_genes, -1)
 
-# training
-trainind = np.asarray(geneanno['seqnames'] != 'chrX') * np.asarray(
-    geneanno['seqnames'] != 'chrY') * np.asarray(geneanno['seqnames'] != 'chr8')
-testind = np.asarray(geneanno['seqnames'] == 'chr8')
+    print(f'Training data shape: {Xreducedall.shape}')
 
-dtrain = xgb.DMatrix(Xreducedall[trainind * filt, :])
-dtest = xgb.DMatrix(Xreducedall[(testind) * filt, :])
+    # training
+    train_ind = np.asarray(geneanno['seqnames'] != 'chrX') * \
+                np.asarray(geneanno['seqnames'] != 'chrY') * \
+                np.asarray(geneanno['seqnames'] != 'chr7') * \
+                np.asarray(geneanno['seqnames'] != 'chr8')
 
+    val_ind = np.asarray(geneanno['seqnames'] == 'chr8')
 
-dtrain.set_label(np.asarray(
-    np.log(geneexp.iloc[trainind * filt, args.targetIndex] + args.pseudocount)))
-dtest.set_label(np.asarray(
-    np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount)))
+    dtrain = xgb.DMatrix(Xreducedall[train_ind * filt, :])
+    dval = xgb.DMatrix(Xreducedall[val_ind * filt, :])
 
-param = {'booster': 'gblinear', 'base_score': args.base_score, 'alpha': 0,
-         'lambda': args.l2, 'eta': args.eta, 'objective': 'reg:linear',
-         'nthread': args.threads, "early_stopping_rounds": 10}
+    dtrain.set_label(np.asarray(
+        np.log(geneexp.iloc[train_ind * filt, ti] + args.pseudocount)))
+    dval.set_label(np.asarray(
+        np.log(geneexp.iloc[val_ind * filt, ti] + args.pseudocount)))
 
-evallist = [(dtest, 'eval'), (dtrain, 'train')]
-num_round = args.num_round
-bst = xgb.train(param, dtrain, num_round, evallist)
-ypred = bst.predict(dtest)
-ytrue = np.asarray(np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount))
+    param = {'booster': 'gblinear', 'base_score': args.base_score, 'alpha': 0,
+             'lambda': args.l2, 'eta': args.eta, 'objective': 'reg:linear',
+             'nthread': args.threads, "early_stopping_rounds": 10}
 
-print(spearmanr(ypred, ytrue))
-if args.evalFile != '':
-    evaldf = pd.DataFrame({'pred':ypred,'target':np.asarray(
-     np.log(geneexp.iloc[(testind) * filt, args.targetIndex] + args.pseudocount))})
-    evaldf.to_csv(args.evalFile)
+    evallist = [(dval, 'eval'), (dtrain, 'train')]
+    num_round = args.num_round
+    bst = xgb.train(param, dtrain, num_round, evallist, verbose_eval=False)
 
-bst.save_model(f'{args.output_dir}/expecto_{args.filterStr}.pseudocount{args.pseudocount}.lambda{args.l2}'
-               f'.round{args.num_round}.basescore{args.base_score}.{geneexp.columns[args.targetIndex]}.save')
-bst.dump_model(f'{args.output_dir}/expecto_{args.filterStr}.pseudocount{args.pseudocount}.lambda{args.l2}'
-               f'.round{args.num_round}.basescore{args.base_score}.{geneexp.columns[args.targetIndex]}.dump')
+    bst.save_model(f'{model_dir}/expecto_{args.filterStr}.pseudocount{args.pseudocount}.lambda{args.l2}'
+                   f'.round{args.num_round}.basescore{args.base_score}.{geneexp.columns[ti]}.save')
+    bst.dump_model(f'{model_dir}/expecto_{args.filterStr}.pseudocount{args.pseudocount}.lambda{args.l2}'
+                   f'.round{args.num_round}.basescore{args.base_score}.{geneexp.columns[ti]}.dump')
 
-# Plots
-def plot_preds(ytrue, ypred, out_dir):
-    print(spearmanr(ytrue, ypred))
+    # Plots
+    def plot_preds(ytrue, ypred, out_dir):
+        fig = sns.scatterplot(x=ytrue, y=ypred, color="black", alpha=0.3, s=20)
+        plt.plot([0, 1], [0, 1], c='orange', transform=fig.transAxes)
+        plt.xlim(np.min(ytrue), np.max(ytrue))
+        plt.ylim(np.min(ytrue), np.max(ytrue))
+        plt.ylabel('Predictions (log RPM)')
+        plt.xlabel('Labels (log RPM)')
+        pearsonr_value, _ = pearsonr(ytrue, ypred)
+        r2_value = r2_score(y_true=ytrue, y_pred=ypred)
+        plt.title(f'PearsonR: {pearsonr_value:.3f}, R2: {r2_value:.3f}')
+        plt.savefig(out_dir, dpi=300)
 
-    fig = sns.scatterplot(x=ytrue, y=ypred, color="black", alpha=0.3, s=20)
-    plt.plot([0, 1], [0, 1], c='orange', transform=fig.transAxes)
-    plt.xlim(np.min(ytrue), np.max(ytrue))
-    plt.ylim(np.min(ytrue), np.max(ytrue))
-    plt.ylabel('Predictions (log RPM)')
-    plt.xlabel('Labels (log RPM)')
-    train_pearsonr, _ = pearsonr(ytrue, ypred)
-    train_r2 = r2_score(y_true=ytrue, y_pred=ypred)
-    plt.title(f'PearsonR: {train_pearsonr:.3f}, R2: {train_r2:.3f}')
-    plt.savefig(out_dir, dpi=300)
+        plt.show()
+        plt.close('all')
+        return pearsonr_value, r2_value
 
-    plt.show()
-    plt.close('all')
+    ypred_val = bst.predict(dval)
+    ytrue_val = np.asarray(np.log(geneexp.iloc[val_ind * filt, ti] + args.pseudocount))
+    pearsonr_val, r2_val = plot_preds(ytrue_val, ypred_val, f'{args.output_dir}/{ti}_val_plot.png')
+    pearsonr_valids.append(pearsonr_val)
+    r2_valids.append(r2_val)
 
+    ypred_train = bst.predict(dtrain)
+    ytrue_train = np.asarray(np.log(geneexp.iloc[train_ind * filt, ti] + args.pseudocount))
+    pearsonr_train, r2_train = plot_preds(ytrue_train, ypred_train, f'{args.output_dir}/{ti}_train_plots.png')
+    pearsonr_trains.append(pearsonr_train)
+    r2_trains.append(r2_train)
 
-plot_preds(ytrue, ypred, f'{args.output_dir}/test_plots.png')
+metrics_dir = f'{args.output_dir}/metrics'
+os.makedirs(metrics_dir, exist_ok=True)
 
-ypred_train = bst.predict(dtrain)
-ytrue_train = np.asarray(np.log(geneexp.iloc[trainind * filt, args.targetIndex] + args.pseudocount))
-plot_preds(ytrue_train, ypred_train, f'{args.output_dir}/train_plots.png')
+with h5py.File(f'{metrics_dir}/metrics.h5', 'w') as h5_out:
+    h5_out.create_dataset('pearsonr_valids', data=pearsonr_valids)
+    h5_out.create_dataset('r2_valids', data=r2_valids)
+    h5_out.create_dataset('pearsonr_trains', data=pearsonr_trains)
+    h5_out.create_dataset('r2_trains', data=r2_trains)

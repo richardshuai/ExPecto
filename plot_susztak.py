@@ -5,89 +5,84 @@ import numpy as np
 import os
 import seaborn as sns
 from scipy.stats import pearsonr, spearmanr
+import h5py
 
 def main():
-    parser = argparse.ArgumentParser(description='Make gene expression annotation file for kidney data')
-    parser.add_argument('--exp_file', dest='exp_file', type=str, default='./resources/geneanno.exp.csv')
-    parser.add_argument('--kidney_exp_file', dest='kidney_exp_file', type=str,
-                        default='resources/geneanno.exp_kidney.csv')
-    parser.add_argument('--pseudocount', action="store",
-                        dest="pseudocount", type=float, default=0.0001)
-    parser.add_argument('--out_dir', type=str, default='data_distribution_plots')
-    parser.add_argument('--kidney_genes_only', action="store_true",
-                        dest="kidney_genes_only", default=False,
-                        help="If true, only use genes in our kidney data.")
+    parser = argparse.ArgumentParser(description='Plot metrics from trained Susztak models')
+    parser.add_argument('--metrics_h5', type=str, default='metrics h5')
+    parser.add_argument('--out_dir', type=str, default='temp_plot_susztak')
     args = parser.parse_args()
 
-    # Plot kidney data distributions
-    plot_dir = f'{args.out_dir}/kidney'
-    os.makedirs(plot_dir, exist_ok=True)
-    kidney_exp_df = pd.read_csv(args.kidney_exp_file, index_col=0).reset_index(drop=True)
-    nan_mask = np.any(kidney_exp_df.isnull(), axis=1)
-    kidney_exp_df = kidney_exp_df[~nan_mask]
-    kidney_exp_df = np.log(kidney_exp_df + args.pseudocount)
-    xmin, xmax = np.min(np.array(kidney_exp_df)), np.max(np.array(kidney_exp_df))
-    bins = np.linspace(xmin, xmax, num=50)
-    for i, cell_type in enumerate(kidney_exp_df):
-        # if i == 3:
-        #     break
-        plt.figure()
-        plt.hist(kidney_exp_df.loc[:, cell_type], bins=bins)
-        plt.title(f'{cell_type}')
-        plt.savefig(f'{plot_dir}/{cell_type}_hist.png', dpi=300)
-        plt.show()
+    os.makedirs(args.out_dir, exist_ok=True)
 
-    # Plot ExPecto data distribution
-    plot_dir = f'{args.out_dir}/expecto'
-    os.makedirs(plot_dir, exist_ok=True)
-    exp_df = pd.read_csv(args.exp_file, index_col=0).reset_index(drop=True)
-    exp_df = np.log(exp_df + args.pseudocount)
-    if args.kidney_genes_only:
-        print("Only using genes found in our kidney data")
-        exp_df = exp_df[~nan_mask]
-    xmin, xmax = np.min(np.array(exp_df)), np.max(np.array(exp_df))
-    bins = np.linspace(xmin, xmax, num=50)
-    for i, cell_type in enumerate(exp_df):
-        if 'kidney' not in cell_type.lower():
-            continue
-        plt.figure()
-        plt.hist(exp_df.loc[:, cell_type], bins=bins)
-        plt.title(f'{cell_type}')
-        plt.savefig(f'{plot_dir}/{cell_type}_hist.png', dpi=300)
-        plt.show()
+    metrics_h5 = h5py.File(args.metrics_h5, 'r')
 
-    # Plot data distributions for PT against ExPecto
-    kidney_cell_type = 'PT'
-    i_e = 0
-    expecto_cell_type = exp_df.columns[i_e]
+    def scatter_hist(x, y, ax, ax_histx, ax_histy, xlabel, ylabel):
+        # no labels
+        ax_histx.tick_params(axis="x", labelbottom=False)
+        ax_histy.tick_params(axis="y", labelleft=False)
 
-    if args.kidney_genes_only:
-        # Mask is already applied to exp_df
-        plot_kidney_vs_expecto(x_kidney=kidney_exp_df[kidney_cell_type], y_expecto=exp_df[expecto_cell_type],
-                               xlabel=f'{kidney_cell_type} expression, log(RPKM)',
-                               ylabel=f'{expecto_cell_type} expression, log(RPKM)',
-                               out_dir=f'{args.out_dir}/scatter_{kidney_cell_type}_vs_{expecto_cell_type}.png')
+        # the scatter plot:
+        # now determine nice limits by hand:
+        xymax = max(np.max(x), np.max(y))
+        xymin = min(np.min(x), np.min(y))
+        max_lim = xymax + 0.002
+        min_lim = xymin - 0.002
 
-    else:
-        plot_kidney_vs_expecto(x_kidney=kidney_exp_df[kidney_cell_type], y_expecto=exp_df[~nan_mask][expecto_cell_type],
-                               xlabel=f'{kidney_cell_type} expression, log(RPKM)',
-                               ylabel=f'{expecto_cell_type} expression, log(RPKM)',
-                               out_dir=f'{args.out_dir}/scatter_{kidney_cell_type}_vs_{expecto_cell_type}.png')
+        ax.scatter(x[:-1], y[:-1], c='black', s=30)
+        ax.scatter(x[-1:], y[-1:], c='orange', s=30, label='averaged expression')
+        ax.legend()
+        ax.set_xlim(min_lim, max_lim)
+        ax.set_ylim(min_lim, max_lim)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        binwidth = (xymax - xymin) / 15
 
 
-# Plots
-def plot_kidney_vs_expecto(x_kidney, y_expecto, xlabel, ylabel, out_dir):
-    spearman, _ = spearmanr(x_kidney, y_expecto)
-    pearson, _ = pearsonr(x_kidney, y_expecto)
-    fig = sns.scatterplot(x=x_kidney, y=y_expecto, color="black", alpha=0.3, s=10)
-    plt.ylabel(ylabel)
-    plt.xlabel(xlabel)
-    plt.xlim(np.min([y_expecto, x_kidney]), np.max([y_expecto, x_kidney]))
-    plt.ylim(np.min([y_expecto, x_kidney]), np.max([y_expecto, x_kidney]))
-    plt.title(f'PearsonR: {pearson:.3f}, SpearmanR: {spearman:.3f}')
-    plt.savefig(out_dir, dpi=300)
+        bins = np.arange(xymin, xymax, binwidth)
+        ax_histx.hist(x, bins=bins, alpha=0.8)
+        ax_histy.hist(y, bins=bins, orientation='horizontal', alpha=0.8)
+
+    # definitions for the axes
+    left, width = 0.12, 0.65
+    bottom, height = 0.1, 0.65
+    spacing = 0.005
+
+    rect_scatter = [left, bottom, width, height]
+    rect_histx = [left, bottom + height + spacing, width, 0.2]
+    rect_histy = [left + width + spacing, bottom, 0.2, height]
+
+    # start with a square Figure
+    fig = plt.figure(figsize=(6, 6))
+
+    ax = fig.add_axes(rect_scatter)
+    ax_histx = fig.add_axes(rect_histx, sharex=ax)
+    ax_histy = fig.add_axes(rect_histy, sharey=ax)
+
+    # use the previously defined function
+    scatter_hist(metrics_h5['pearsonr_trains'], metrics_h5['pearsonr_valids'], ax, ax_histx, ax_histy,
+                 xlabel="Train PearsonR (holding out chr8, chr7)",
+                 ylabel="Valid PearsonR (chr8)")
+    plt.tight_layout()
+    plt.savefig(f'{args.out_dir}/pearsonr.png', dpi=300)
     plt.show()
-    plt.close('all')
+
+    # start with a square Figure
+    fig = plt.figure(figsize=(6, 6))
+
+    ax = fig.add_axes(rect_scatter)
+    ax_histx = fig.add_axes(rect_histx, sharex=ax)
+    ax_histy = fig.add_axes(rect_histy, sharey=ax)
+
+    # use the previously defined function
+    scatter_hist(metrics_h5['r2_trains'], metrics_h5['r2_valids'], ax, ax_histx, ax_histy,
+                 xlabel="Train r2 (holding out chr8, chr7)",
+                 ylabel="Valid r2 (chr8)")
+    plt.tight_layout()
+    plt.savefig(f'{args.out_dir}/r2.png', dpi=300)
+    plt.show()
+
 
 
 if __name__ == '__main__':

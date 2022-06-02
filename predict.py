@@ -37,7 +37,7 @@ parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
                     help="tsv file denoting Beluga features")
 parser.add_argument('--feature_clusters_df', action="store", dest="feature_clusters_df",
                     help="tsv file for clustered features")
-
+parser.add_argument('--motif_clustering', action="store", )
 parser.add_argument('--nfeatures', action="store",
                     dest="nfeatures", type=int, default=2002)
 parser.add_argument('-o', action="store", dest="out_dir")
@@ -72,6 +72,8 @@ parser.add_argument('--no_pol2', action='store_true',
                     help='take out Pol2*')
 
 args = parser.parse_args()
+
+# TODO: DEPRECATED?
 
 os.makedirs(args.out_dir, exist_ok=True)
 
@@ -189,7 +191,8 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, all_
                                  * np.repeat(Xreducedall_diffs[j][i * batchSize:(i + 1) * batchSize, :], nfeatures, axis=1) for j in range(len(Xreducedall_diffs))])
 
         # adjust for training on subset of tracks
-        keep_mask = get_keep_mask(args, beluga_features_df)
+        keep_mask = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2)
         keep_indices = np.nonzero(keep_mask)[0]
         n_marks = np.sum(keep_mask)
         alt_features = alt_features.reshape(alt_features.shape[0], 10, 2002)[:, :, keep_indices].reshape(
@@ -332,7 +335,8 @@ snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
                              ignore_index=False)
 snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
 
-keep_mask = get_keep_mask(args, beluga_features_df)
+keep_mask, hgnc_df = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2, return_hgnc_df=True)
 feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=beluga_features_df['Assay type + assay + cell type'][keep_mask])
 
 # Sort by magnitude of SNP effects

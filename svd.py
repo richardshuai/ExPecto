@@ -65,8 +65,8 @@ def main():
     beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df[
         'Assay'] + '/' + beluga_features_df['Cell type']
 
-    keep_mask = get_keep_mask(args, beluga_features_df)
-
+    keep_mask = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2)
     keep_indices = np.nonzero(keep_mask.values)[0]
     tracks = tracks[keep_indices]
 

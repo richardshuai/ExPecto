@@ -18,13 +18,12 @@ parser.add_argument('--geneFile', action="store",
                     dest="geneFile")
 parser.add_argument('--snpEffectFilePattern', action="store", dest="snpEffectFilePattern",
                     help="SNP effect hdf5 filename pattern. Use SHIFT as placeholder for shifts.")
-parser.add_argument('--model_save_file', action="store", dest="model",
+parser.add_argument('--model_save_file', action="store", dest="model_save_file",
                     help="Save file containing model to use for predictions")
 parser.add_argument('--belugaFeatures', action="store", dest="belugaFeatures",
                     help="tsv file denoting Beluga features")
-parser.add_argument('--feature_clusters_df', action="store", dest="feature_clusters_df",
-                    help="tsv file for clustered features")
-
+parser.add_argument('--rsat_clusters_tab', action="store", dest="rsat_clusters_tab",
+                    help="clusters_motif_names.tab")
 parser.add_argument('--nfeatures', action="store",
                     dest="nfeatures", type=int, default=2002)
 parser.add_argument('--fixeddist', action="store",
@@ -39,7 +38,6 @@ parser.add_argument('--splitFold', action="store",
                     dest="splitFold", type=int, default=10)
 parser.add_argument('--threads', action="store", dest="threads",
                     type=int, default=16, help="Number of threads.")
-
 parser.add_argument('--no_tf_features', action='store_true',
                     dest='no_tf_features', default=False,
                     help='leave out TF marks for training')
@@ -61,13 +59,36 @@ args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
 
-feature_clusters_df = pd.read_csv(args.feature_clusters_df, sep='\t', index_col=0)
-clusters = feature_clusters_df['cluster']
-
 # Interpret SED scores
 beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
 beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df['Assay'] + '/' + beluga_features_df['Cell type']
 
+keep_mask, hgnc_df = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2, return_hgnc_df=True)
+
+hgnc_df = hgnc_df[keep_mask]
+
+
+# Read tab file from RSAT matrix-clustering
+rsat_clusters_df = pd.read_csv(args.rsat_clusters_tab, sep='\t', header=None)
+
+# Get cluster IDs for each assay
+rsat_cluster_sets = rsat_clusters_df[1].str.upper().str.split(',').apply(set)
+
+clusters = []
+for assay in hgnc_df["Assay"]:
+    motif_found = False
+    for cluster_idx, motif_set in enumerate(rsat_cluster_sets.values):
+        if assay in motif_set:
+            if motif_found:
+                print(assay)
+                continue
+            clusters.append(cluster_idx + 1)  # rsat cluster ids start from 1
+            motif_found = True
+    if not motif_found:
+        clusters.append(-1)
+
+hgnc_df["cluster"] = clusters
 
 def interpret_model(model, ref_features, alt_features):
     dump = model.get_dump()[0].strip('\n').split('\n')
@@ -86,9 +107,7 @@ def interpret_model(model, ref_features, alt_features):
     return preds_per_feature_proportion
 
 
-def interpret_model_with_clusters(model, ref_features, alt_features, clusters):
-    # TODO: Normalize cluster contribs by size of cluster? to get average contribution of feature in cluster.
-    # TODO: Just change it to mean() to do this, but I don't think it makes sense to take the avg since it penalizes redundant features.
+def interpret_model_with_clusters_rsat(model, ref_features, alt_features, clusters):
     dump = model.get_dump()[0].strip('\n').split('\n')
     bias = float(dump[1])
     weights = np.array(list(map(float, dump[3:])))
@@ -99,7 +118,7 @@ def interpret_model_with_clusters(model, ref_features, alt_features, clusters):
         .transpose(0, 2, 1)  # (n_snps, n_chromatin_marks, n_features_per_mark)
 
     preds_per_feature_df = pd.DataFrame(preds_per_feature.reshape(preds_per_feature.shape[0], -1).T)  # (n_input_features, n_snps)
-    cluster_labels = np.repeat(clusters.values, 10)
+    cluster_labels = np.repeat(clusters, 10)
     assert cluster_labels.shape[0] == preds_per_feature_df.shape[0], "cluster labels and output preds df should match shape"
     preds_per_feature_df['cluster'] = cluster_labels
     cluster_contribs = preds_per_feature_df.groupby('cluster').sum().values.T
@@ -154,8 +173,12 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, mode
     ref = np.zeros(n_snps)
     alt = np.zeros(n_snps)
     effect = np.zeros(n_snps)
-    cluster_proportions = np.zeros((n_snps, len(np.unique(clusters))))
+    keep_mask = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
+                              args.no_histone_features, args.intersect_with_lambert, args.no_pol2)
+    keep_indices = np.nonzero(keep_mask)[0]
+    n_marks = np.sum(keep_mask)
     preds_per_feature_proportion = np.zeros((n_snps, n_marks))
+    cluster_proportions = np.zeros((n_snps, len(np.unique(clusters))))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
         print("Processing " + str(i) + "th batch of "+str(batchSize))
@@ -204,7 +227,7 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, mode
             interpret_model(model, ref_features, alt_features)
 
         cluster_proportions[i * batchSize:(i + 1) * batchSize, :] = \
-            interpret_model_with_clusters(model, ref_features, alt_features, clusters)
+            interpret_model_with_clusters_rsat(model, ref_features, alt_features, clusters)
 
     return effect, ref, alt, preds_per_feature_proportion, cluster_proportions
 
@@ -294,10 +317,7 @@ snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
                              axis=1,
                              ignore_index=False)
 snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
-
-keep_mask = get_keep_mask(beluga_features_df, args.no_tf_features, args.no_dnase_features,
-                  args.no_histone_features, args.intersect_with_lambert, args.no_pol2)
-feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=beluga_features_df['Assay type + assay + cell type'][keep_mask])
+feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=hgnc_df['Assay type + assay + cell type'])
 
 # Sort by magnitude of SNP effects
 snpExpEffects_df_sorted = snpExpEffects_df.copy()
@@ -355,3 +375,7 @@ for i, row in sed_cluster_proportions_df.iterrows():
     plt.tight_layout()
     plt.savefig(f"{cluster_figures_dir}/{rsid}_{gene}.png", bbox_inches="tight", dpi=300)
     plt.show()
+
+
+# Save cluster tab df
+rsat_clusters_df.to_csv(f"{args.out_dir}/rsat_clusters.tsv", sep="\t", header=None)
