@@ -33,6 +33,8 @@ parser.add_argument('--inputsize', action="store", dest="inputsize", type=int,
                     default=2000, help="The input sequence window size for neural network")
 parser.add_argument('--batchsize', action="store", dest="batchsize",
                     type=int, default=32, help="Batch size for neural network predictions.")
+parser.add_argument('--n_batches_per_write', action="store", dest="n_batches_per_write",
+                    type=int, default=32, help="Write every n batches to h5 file to reduce memory consumption.")
 parser.add_argument('--output_dir', action="store", dest="output_dir",
                     type=str, default='chromatin_out', help="Output directory for predictions.")
 parser.add_argument('--cuda', action='store_true')
@@ -201,11 +203,13 @@ def fetchSeqs(chr, pos, ref, alt, shift=0, inputsize=2000):
     # return string: ref sequence, string: alt sequence, Bool: whether ref allele matches with reference genome
     seq = genome.sequence({'chr': chr, 'start': pos + shift -
                            int(windowsize / 2 - 1), 'stop': pos + shift + int(windowsize / 2)})
-    return seq[:mutpos] + ref + seq[(mutpos + len(ref)):], seq[:mutpos] + alt + seq[(mutpos + len(ref)):], seq[mutpos:(mutpos + len(ref))].upper() == ref.upper()
+    ref_matched_bool = seq[mutpos:(mutpos + len(ref))].upper() == ref.upper()
+    alt_matched_bool = seq[mutpos:(mutpos + len(ref))].upper() == alt.upper()
+    return seq[:mutpos] + ref + seq[(mutpos + len(ref)):], seq[:mutpos] + alt + seq[(mutpos + len(ref)):], ref_matched_bool, alt_matched_bool
 
 
 vcf = pd.read_csv(inputfile, sep='\t', header=None, comment='#',
-                  names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"])
+                  names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]).iloc[:2000]  # TODO: REMOVE THIS
 
 # lift over to hg19 if necessary
 if args.hg38:
@@ -226,61 +230,75 @@ if args.hg38:
 vcf.iloc[:, 0] = 'chr' + vcf.iloc[:, 0].map(str).str.replace('chr', '')
 vcf = vcf[vcf.iloc[:, 0].isin(CHRS)]
 
+# Preserve vcf file with lifted coordinates
+vcf_file_hg19 = f'{args.output_dir}/snps_hg19.vcf'
+vcf_file_hg19_out = open(vcf_file_hg19, 'w')
+print('##fileformat=VCFv4.3', file=vcf_file_hg19_out)
+print('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO', file=vcf_file_hg19_out)
+vcf_file_hg19_out.close()
+vcf.to_csv(vcf_file_hg19, sep='\t', header=False, index=False, mode='a')
+
 for shift in tqdm([0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(200, maxshift + 1, 200))):
+    f = h5py.File(f'{args.output_dir}/snps.shift_{str(shift)}.diff.h5', 'w')
+
+    chunk_size = min(vcf.shape[0] * 2, args.batchsize * args.n_batches_per_write)
+    diff_dset = f.create_dataset('diff', shape=(vcf.shape[0] * 2, 2002), chunks=(chunk_size, 2002), dtype=np.float32)
+    ref_dset = f.create_dataset('ref', shape=(vcf.shape[0] * 2, 2002), chunks=(chunk_size, 2002), dtype=np.float32)
+    alt_dset = f.create_dataset('alt', shape=(vcf.shape[0] * 2, 2002), chunks=(chunk_size, 2002), dtype=np.float32)
+
     refseqs = []
     altseqs = []
     ref_matched_bools = []
+    alt_matched_bools = []
     for i in range(vcf.shape[0]):
-        refseq, altseq, ref_matched_bool = fetchSeqs(
+        refseq, altseq, ref_matched_bool, alt_matched_bool = fetchSeqs(
             vcf.iloc[i, 0], int(vcf.iloc[i, 1]), vcf.iloc[i, 3], vcf.iloc[i, 4], shift=shift, inputsize=inputsize)
         refseqs.append(refseq)
         altseqs.append(altseq)
         ref_matched_bools.append(ref_matched_bool)
+        alt_matched_bools.append(alt_matched_bool)
 
     if shift == 0:
         # only need to be checked once
-        print("Number of variants with reference allele matched with reference genome:")
-        print(np.sum(ref_matched_bools))
-        print("Number of input variants:")
-        print(len(ref_matched_bools))
+        print(f"Number of variants with reference allele matched with reference genome: {np.sum(ref_matched_bools)}")
+        print(f"Number of variants with alternate allele matched with reference genome: {np.sum(alt_matched_bools)}")
+        print(f"Number of input variants: {len(ref_matched_bools)}")
 
     ref_encoded = encodeSeqs(refseqs, inputsize=inputsize).astype(np.float32)
     alt_encoded = encodeSeqs(altseqs, inputsize=inputsize).astype(np.float32)
-    #print(ref_encoded.shape)
-    #print(alt_encoded.shape)
+
+    assert ref_encoded.shape[0] == alt_encoded.shape[0], "Number of ref and alt encoded seqs should be the same"
 
     ref_preds = []
+    alt_preds = []
+    h5_dset_i = 0  # index to write to h5 dataset
+
     for i in range(int(1 + (ref_encoded.shape[0]-1) / batchSize)):
         input = torch.from_numpy(ref_encoded[int(i*batchSize):int((i+1)*batchSize),:,:]).unsqueeze(2)
         if args.cuda:
             input = input.cuda()
         ref_preds.append(model.forward(input).cpu().detach().numpy().copy())
-    ref_preds = np.vstack(ref_preds)
 
-    alt_preds = []
-    for i in range(int(1 + (alt_encoded.shape[0]-1) / batchSize)):
         input = torch.from_numpy(alt_encoded[int(i*batchSize):int( (i+1)*batchSize),:,:]).unsqueeze(2)
         if args.cuda:
             input = input.cuda()
         alt_preds.append(model.forward(input).cpu().detach().numpy().copy())
-    alt_preds = np.vstack(alt_preds)
 
-    #ref_preds = np.vstack(map(lambda x: model.forward(x).numpy(),
-    #        np.array_split(ref_encoded, int(1 + len(refseqs) / batchSize))))
-    #alt_encoded = torch.from_numpy(encodeSeqs(altseqs).astype(np.float32)).unsqueeze(3)
-    #alt_preds = np.vstack(map(lambda x: model.forward(x).numpy(),
-    #        np.array_split(alt_encoded, int(1 + len(altseqs) / batchSize))))
-    diff = alt_preds - ref_preds
-    f = h5py.File(f'{args.output_dir}/snps.shift_{str(shift)}.diff.h5', 'w')
-    f.create_dataset('diff', data=diff)
-    f.create_dataset('ref', data=ref_preds)
-    f.create_dataset('alt', data=alt_preds)
+        # Write every n batches to h5 or if on last batch
+        if (len(ref_preds) == args.n_batches_per_write) or (i == (int(1 + (ref_encoded.shape[0]-1) / batchSize) - 1)):
+            ref_preds = np.vstack(ref_preds)
+            alt_preds = np.vstack(alt_preds)
+            diff = alt_preds - ref_preds
+
+            diff_dset[h5_dset_i:h5_dset_i + diff.shape[0]] = diff
+            ref_dset[h5_dset_i:h5_dset_i + ref_preds.shape[0]] = ref_preds
+            alt_dset[h5_dset_i:h5_dset_i + alt_preds.shape[0]] = alt_preds
+
+            h5_dset_i += ref_preds.shape[0]
+
+            # Clear memory
+            ref_preds = []
+            alt_preds = []
+            del diff
+
     f.close()
-
-    # Preserve vcf file with lifted coordinates
-    vcf_file_hg19 = f'{args.output_dir}/snps_hg19.vcf'
-    vcf_file_hg19_out = open(vcf_file_hg19, 'w')
-    print('##fileformat=VCFv4.3', file=vcf_file_hg19_out)
-    print('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO', file=vcf_file_hg19_out)
-    vcf_file_hg19_out.close()
-    vcf.to_csv(vcf_file_hg19, sep='\t', header=False, index=False, mode='a')
