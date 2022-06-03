@@ -59,6 +59,8 @@ args = parser.parse_args()
 
 os.makedirs(args.out_dir, exist_ok=True)
 
+MOTIF_NOT_FOUND_CLUSTER_ID = -1
+
 # Interpret SED scores
 beluga_features_df = pd.read_csv(args.belugaFeatures, sep='\t', index_col=0)
 beluga_features_df['Assay type + assay + cell type'] = beluga_features_df['Assay type'] + '/' + beluga_features_df['Assay'] + '/' + beluga_features_df['Cell type']
@@ -73,22 +75,32 @@ hgnc_df = hgnc_df[keep_mask]
 rsat_clusters_df = pd.read_csv(args.rsat_clusters_tab, sep='\t', header=None)
 
 # Get cluster IDs for each assay
-rsat_cluster_sets = rsat_clusters_df[1].str.upper().str.split(',').apply(set)
+def preprocess_hocomoco_motifs(motif_list):
+    processed_motif_list = []
+    for motif in motif_list:
+        processed_motif_list.append(motif.split("_")[0])
+    return processed_motif_list
 
-clusters = []
+rsat_cluster_sets = rsat_clusters_df[1].str.upper().str.split(',').apply(preprocess_hocomoco_motifs).apply(set)
+
+assay_clusters = []
+motifs_not_found = set()
 for assay in hgnc_df["Assay"]:
-    motif_found = False
+    assay_i_clusters = []
     for cluster_idx, motif_set in enumerate(rsat_cluster_sets.values):
         if assay in motif_set:
-            if motif_found:
-                print(assay)
-                continue
-            clusters.append(cluster_idx + 1)  # rsat cluster ids start from 1
-            motif_found = True
-    if not motif_found:
-        clusters.append(-1)
+            assay_i_clusters.append(cluster_idx + 1)  # rsat cluster ids start from 1
 
-hgnc_df["cluster"] = clusters
+    if len(assay_i_clusters) == 0:
+        assay_clusters.append([MOTIF_NOT_FOUND_CLUSTER_ID])
+        motifs_not_found.add(assay)
+    else:
+        assay_clusters.append(assay_i_clusters)
+
+hgnc_df["cluster"] = assay_clusters
+rsat_clusters_df = rsat_clusters_df.set_index(0)
+rsat_clusters_df.loc["cluster_-1"] = ",".join(list(motifs_not_found))
+
 
 def interpret_model(model, ref_features, alt_features):
     dump = model.get_dump()[0].strip('\n').split('\n')
@@ -118,17 +130,22 @@ def interpret_model_with_clusters_rsat(model, ref_features, alt_features, cluste
         .transpose(0, 2, 1)  # (n_snps, n_chromatin_marks, n_features_per_mark)
 
     preds_per_feature_df = pd.DataFrame(preds_per_feature.reshape(preds_per_feature.shape[0], -1).T)  # (n_input_features, n_snps)
-    cluster_labels = np.repeat(clusters, 10)
-    assert cluster_labels.shape[0] == preds_per_feature_df.shape[0], "cluster labels and output preds df should match shape"
-    preds_per_feature_df['cluster'] = cluster_labels
-    cluster_contribs = preds_per_feature_df.groupby('cluster').sum().values.T
 
-    cluster_contribs_proportion = cluster_contribs / cluster_contribs.sum(axis=-1, keepdims=True)
+    # for each feature, add its contribution to all clusters that the feature belongs to
+    cluster_contribs = {}
+    for fi in range(preds_per_feature_df.shape[0]):
+        feature_preds = preds_per_feature_df.iloc[fi]
+        cluster_ids = clusters[fi // 10]  # 10 feature per mark
+        for cluster_id in cluster_ids:
+            cluster_contribs[cluster_id] = cluster_contribs.get(cluster_id, 0) + feature_preds
 
-    return cluster_contribs_proportion
+    cluster_contribs = pd.DataFrame(cluster_contribs)  # n_snps x n_clusters
+    cluster_contribs_proportion = cluster_contribs.values / cluster_contribs.values.sum(axis=-1, keepdims=True)
+    return cluster_contribs_proportion, cluster_contribs.columns
 
 
-def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, model, maxshift=800, nfeatures=2002, batchSize=500):
+def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, model, maxshift=800,
+                    nfeatures=2002, batchSize=500, clusters=None):
     """Compute expression effects (log fold-change).
 
     Args:
@@ -178,7 +195,9 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, mode
     keep_indices = np.nonzero(keep_mask)[0]
     n_marks = np.sum(keep_mask)
     preds_per_feature_proportion = np.zeros((n_snps, n_marks))
-    cluster_proportions = np.zeros((n_snps, len(np.unique(clusters))))
+
+    num_clusters = len(set().union(*clusters))  # includes the "motif not found" cluster
+    cluster_proportions = np.zeros((n_snps, num_clusters))
 
     for i in range(int( (n_snps - 1) / batchSize) + 1):
         print("Processing " + str(i) + "th batch of "+str(batchSize))
@@ -226,10 +245,10 @@ def compute_effects(snpeffects, ref_preds, alt_preds, snpdists, snpstrands, mode
         preds_per_feature_proportion[i * batchSize:(i + 1) * batchSize, :] = \
             interpret_model(model, ref_features, alt_features)
 
-        cluster_proportions[i * batchSize:(i + 1) * batchSize, :] = \
+        cluster_proportions[i * batchSize:(i + 1) * batchSize, :], cluster_proportions_columns = \
             interpret_model_with_clusters_rsat(model, ref_features, alt_features, clusters)
 
-    return effect, ref, alt, preds_per_feature_proportion, cluster_proportions
+    return effect, ref, alt, preds_per_feature_proportion, cluster_proportions, cluster_proportions_columns
 
 #load resources
 model = xgb.Booster({'nthread': args.threads})
@@ -297,11 +316,15 @@ genename = np.asarray(gene.iloc[geneinds,-2])
 strand= np.asarray(gene.iloc[geneinds,-3])
 
 # compute expression effects
-snpExpEffects, ref, alt, preds_per_feature_proportion, cluster_proportions = compute_effects(snpEffects, ref_preds, alt_preds,
-                                                                        dist, strand,
-                                                                        model, maxshift=maxshift,
-                                                                        nfeatures=args.nfeatures,
-                                                                        batchSize=args.batchSize)
+compute_effects_results = compute_effects(snpEffects, ref_preds, alt_preds,
+                                          dist, strand,
+                                          model, maxshift=maxshift,
+                                          nfeatures=args.nfeatures,
+                                          batchSize=args.batchSize,
+                                          clusters=assay_clusters)
+
+snpExpEffects, ref, alt, preds_per_feature_proportion, cluster_proportions, cluster_proportions_columns = compute_effects_results
+
 #write output
 snpExpEffects_df = coor
 snpExpEffects_df['dist'] = dist
@@ -342,7 +365,7 @@ sed_feature_contributions_df.to_csv(f'{args.out_dir}/sed_sorted_by_proportion_wi
 # TODO: Plot top m features by absolute value
 cluster_proportions = cluster_proportions.squeeze()
 cluster_proportions_df = pd.DataFrame(cluster_proportions,
-                                      columns=[f'cluster_{idx}' for idx in range(cluster_proportions.shape[1])])
+                                      columns=[f'cluster_{idx}' for idx in cluster_proportions_columns])
 sed_cluster_proportions_df = snpExpEffects_df.copy()
 sed_cluster_proportions_df['SED_PROPORTION'] = np.abs(sed_cluster_proportions_df['SED'] / ((sed_cluster_proportions_df['REF'] + sed_cluster_proportions_df['ALT']) / 2))
 sed_cluster_proportions_df = pd.concat([sed_cluster_proportions_df, cluster_proportions_df], axis=1)
