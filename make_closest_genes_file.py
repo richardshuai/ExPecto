@@ -18,6 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description='Make closest gene file required by predict.py')
     parser.add_argument('hg19_snps_file')
     parser.add_argument('--all_in_receptive_field', action='store_true')
+    parser.add_argument('--add_chr_prefix', action='store_true')
     parser.add_argument('--geneanno_file', dest='geneanno_file', type=str, default='./resources/geneanno.csv')
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_closest_gene_file',
                         help='Output directory')
@@ -25,6 +26,8 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     vcf = pd.read_csv(args.hg19_snps_file, sep='\t', header=None, comment='#')
+    if args.add_chr_prefix:
+        vcf[0] = 'chr' + vcf[0].astype(str)  # include chr to chrom numbering in vcf
     geneanno = pd.read_csv(args.geneanno_file, index_col=0)
 
     # Create VCF file containing SNPs with multiplicity equal to number of genes in receptive field
