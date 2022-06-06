@@ -220,13 +220,13 @@ if args.hg38:
     vcf_lifted = vcf.progress_apply(liftover_to_hg19, axis=1)
 
     # Write variants not lifted over to VCF
-    failed_liftover_mask = (vcf_lifted['POS'] == FAILED_LIFTOVER_VALUE)
+    failed_liftover_mask = (vcf_lifted[1] == FAILED_LIFTOVER_VALUE)
     variants_not_lifted = vcf[failed_liftover_mask]
     print(f"Failed to lift {variants_not_lifted.shape[0]} variants from hg38 to hg19")
     variants_not_lifted.to_csv(f"{args.output_dir}/not_lifted.vcf", sep='\t', header=False, index=False)
 
     # Subset to lifted variants
-    vcf = vcf[~failed_liftover_mask]
+    vcf = vcf_lifted[~failed_liftover_mask]
 
 # Preserve vcf file with lifted coordinates
 vcf_file_hg19 = f'{args.output_dir}/snps_hg19.vcf'
