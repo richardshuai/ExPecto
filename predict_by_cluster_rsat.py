@@ -13,7 +13,7 @@ from six.moves import reduce
 from cluster_utils import get_keep_mask
 
 parser = argparse.ArgumentParser(description='Process some integers.')
-parser.add_argument('--coorFile', action="store", dest="coorFile")
+parser.add_argument('--coorFile_chromatin', action="store", dest="coorFile_chromatin")
 parser.add_argument('--geneFile', action="store",
                     dest="geneFile")
 parser.add_argument('--snpEffectFilePattern', action="store", dest="snpEffectFilePattern",
@@ -283,28 +283,47 @@ for shift in [str(n) for n in [0, ] + list(range(-200, -maxshift - 1, -200)) + l
     alt_preds.append(snp_temp_alt)
 
 
-coor = pd.read_csv(args.coorFile,sep='\t',header=None,comment='#')
-coor = coor.iloc[index_start:index_end,:]
+coor = pd.read_csv(args.coorFile_chromatin, sep='\t', header=None, comment='#')
+# coor = coor.iloc[index_start:index_end, :]
 
 #Fetch the distance to TSS information
+def get_num_repeats(genes_df):
+    repeats = [0]
+    i = 0
+    prev = None
+    for _, row in genes_df.iterrows():
+        curr = ':'.join(list(map(str, row.iloc[0:5])))  # '1:10690947:10690948:C:T'
+        if prev is not None and curr != prev:
+            repeats.append(0)
+            i += 1
+        repeats[i] += 1
+        prev = curr
+    return repeats
 
-def add_multiplicity_suffixes(arr):
-    """
-    Takes in array and appends suffixes _i where i is the number of times the value has shown up previously
-    in the array. Used for matching below.
-    """
-    suffixed_array = []
-    counts = {}
-    for x in arr:
-        suffixed_x = x + f'_{counts.get(x, 0)}'
-        counts[x] = counts.get(x, 0) + 1
-        suffixed_array.append(suffixed_x)
-
-    return np.array(suffixed_array)
 
 gene = pd.read_csv(args.geneFile,sep='\t',header=None,comment='#')
-geneinds = pd.match(add_multiplicity_suffixes(coor.iloc[:,0].map(str).str.replace('chr','')+' '+coor.iloc[:,1].map(str)),
-            add_multiplicity_suffixes(gene.iloc[:,0].map(str).str.replace('chr','')+' '+gene.iloc[:,2].map(str)))
+
+# The below assumes chromatin.py was used to generate the coor vcf, and make_closest_genes_file.py was used to generate the gene vcf
+
+# deal with duplicates in original snps vcf
+gene = gene.drop_duplicates(keep="first")
+coor_mask = ~coor.duplicated(keep="first")
+coor = coor[coor_mask]
+ref_preds = np.array(ref_preds)[:, coor_mask, :]
+alt_preds = np.array(alt_preds)[:, coor_mask, :]
+snpEffects = np.array(snpEffects)[:, coor_mask, :]
+
+# Get num repeats to match gene with chromatin vcf, then repeat the vcf entries and chromatin effects
+repeats = get_num_repeats(gene)
+coor_new = pd.DataFrame(np.repeat(coor.values, repeats, axis=0))
+coor_new.columns = coor.columns
+coor = coor_new
+
+ref_preds = np.repeat(ref_preds, repeats=repeats, axis=1)
+alt_preds = np.repeat(alt_preds, repeats=repeats, axis=1)
+snpEffects = np.repeat(snpEffects, repeats=repeats, axis=1)
+
+geneinds = np.arange(coor.shape[0])
 
 if np.any(geneinds==-1):
     raise ValueError("Gene association file does not match the vcf file.")
@@ -313,7 +332,7 @@ if args.fixeddist == 0:
 else:
     dist = args.fixeddist
 genename = np.asarray(gene.iloc[geneinds,-2])
-strand= np.asarray(gene.iloc[geneinds,-3])
+strand = np.asarray(gene.iloc[geneinds,-3])
 
 # compute expression effects
 compute_effects_results = compute_effects(snpEffects, ref_preds, alt_preds,
