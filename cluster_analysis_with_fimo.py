@@ -25,15 +25,15 @@ def main():
 
     # Setup
     os.makedirs(args.out_dir, exist_ok=True)
-    np.random.seed(0)
+    np.random.seed(1)
 
     # Read cluster contribs df and fimo out
     rsat_clusters_df = pd.read_csv(args.rsat_clusters_file, sep="\t", header=None, index_col=0)
     cluster_contribs_df = pd.read_csv(args.cluster_contribs_file, sep="\t", index_col=0).drop("cluster_-1", axis=1) \
                                                                                         .reset_index(drop=True)
-
     if args.rank_int:
         # apply rank inverse normal transform to SED scores
+        # Somehow breaks the shuffled clusters/shuffled variants analysis?
         cluster_contribs_df.insert(
             loc=cluster_contribs_df.columns.tolist().index("SED") + 1,
             column="SED_RINT",

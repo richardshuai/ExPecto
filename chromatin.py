@@ -257,7 +257,7 @@ for shift in tqdm([0, ] + list(range(-200, -maxshift - 1, -200)) + list(range(20
         # only need to be checked once
         print(f"Number of variants with reference allele matched with reference genome: {np.sum(ref_matched_bools)}")
         print(f"Number of variants with alternate allele matched with reference genome: {np.sum(alt_matched_bools)}")
-        print(f"Number of input variants: len(ref_matched_bools)")
+        print(f"Number of input variants: {len(ref_matched_bools)}")
 
     ref_encoded = encodeSeqs(refseqs, inputsize=inputsize).astype(np.float32)
     alt_encoded = encodeSeqs(altseqs, inputsize=inputsize).astype(np.float32)
