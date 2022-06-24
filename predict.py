@@ -265,16 +265,16 @@ snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
                               ],
                              axis=1,
                              ignore_index=False)
-snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
+snpExpEffects_df.to_csv(f'{args.out_dir}/sed.tsv', header=True, sep='\t', index=False)
 
 # Sort by magnitude of SNP effects
 snpExpEffects_df_sorted = snpExpEffects_df.copy()
 snpExpEffects_df_sorted['SED_MAGNITUDES'] = np.abs(snpExpEffects_df_sorted['SED'])
 snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_MAGNITUDES', axis=0, ascending=False)
-snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_magnitude.csv', header=True, sep='\t', index=False)
+snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_magnitude.tsv', header=True, sep='\t', index=False)
 
 # Sort by SAD magnitude proportion
 snpExpEffects_df_sorted = snpExpEffects_df.copy()
 snpExpEffects_df_sorted['SED_PROPORTION'] = np.abs(snpExpEffects_df_sorted['SED'] / ((snpExpEffects_df_sorted['REF'] + snpExpEffects_df_sorted['ALT']) / 2))
 snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_PROPORTION', axis=0, ascending=False)
-snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.csv', header=True, sep='\t', index=False)
+snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.tsv', header=True, sep='\t', index=False)

@@ -359,25 +359,25 @@ snpExpEffects_df = pd.concat([snpExpEffects_df.reset_index(),
                              axis=1,
                              ignore_index=False)
 snpExpEffects_df.to_csv(f'{args.out_dir}/sed.csv', header=True, sep='\t', index=False)
-feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=hgnc_df['Assay type + assay + cell type'])
+feature_contributions_df = pd.DataFrame(preds_per_feature_proportion.squeeze(), columns=hgnc_df['Assay'] + '/' + hgnc_df['Cell type'])
 
 # Sort by magnitude of SNP effects
 snpExpEffects_df_sorted = snpExpEffects_df.copy()
 snpExpEffects_df_sorted['SED_MAGNITUDES'] = np.abs(snpExpEffects_df_sorted['SED'])
 snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_MAGNITUDES', axis=0, ascending=False)
-snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_magnitude.csv', header=True, sep='\t', index=False)
+snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_magnitude.tsv', header=True, sep='\t', index=False)
 
 # Sort by SAD magnitude proportion
 snpExpEffects_df_sorted = snpExpEffects_df.copy()
 snpExpEffects_df_sorted['SED_PROPORTION'] = np.abs(snpExpEffects_df_sorted['SED'] / ((snpExpEffects_df_sorted['REF'] + snpExpEffects_df_sorted['ALT']) / 2))
 snpExpEffects_df_sorted = snpExpEffects_df_sorted.sort_values(by='SED_PROPORTION', axis=0, ascending=False)
-snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.csv', header=True, sep='\t', index=False)
+snpExpEffects_df_sorted.to_csv(f'{args.out_dir}/sed_sorted_by_proportion.tsv', header=True, sep='\t', index=False)
 
 sed_feature_contributions_df = snpExpEffects_df.copy()
 sed_feature_contributions_df['SED_PROPORTION'] = np.abs(sed_feature_contributions_df['SED'] / ((sed_feature_contributions_df['REF'] + sed_feature_contributions_df['ALT']) / 2))
 sed_feature_contributions_df = pd.concat([sed_feature_contributions_df, feature_contributions_df], axis=1)
 sed_feature_contributions_df = sed_feature_contributions_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False).reset_index(drop=True)
-sed_feature_contributions_df.to_csv(f'{args.out_dir}/sed_sorted_by_proportion_with_contribs.csv', header=True, sep='\t', index=False)
+sed_feature_contributions_df.to_csv(f'{args.out_dir}/sed_sorted_by_proportion_with_contribs.tsv', header=True, sep='\t', index=False)
 
 # Plotting
 # TODO: Plot top k genes
@@ -389,7 +389,7 @@ sed_cluster_proportions_df = snpExpEffects_df.copy()
 sed_cluster_proportions_df['SED_PROPORTION'] = np.abs(sed_cluster_proportions_df['SED'] / ((sed_cluster_proportions_df['REF'] + sed_cluster_proportions_df['ALT']) / 2))
 sed_cluster_proportions_df = pd.concat([sed_cluster_proportions_df, cluster_proportions_df], axis=1)
 sed_cluster_proportions_df = sed_cluster_proportions_df.sort_values(by='SED_PROPORTION', axis=0, ascending=False).reset_index(drop=True)
-sed_cluster_proportions_df.to_csv(f'{args.out_dir}/cluster_contribs.csv', header=True, sep='\t', index=False)
+sed_cluster_proportions_df.to_csv(f'{args.out_dir}/cluster_contribs.tsv', header=True, sep='\t', index=False)
 
 cluster_proportions = cluster_proportions.squeeze()
 cluster_figures_dir = f'{args.out_dir}/cluster_figures'

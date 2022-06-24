@@ -31,6 +31,7 @@ def main():
     geneanno = pd.read_csv(args.geneanno_file, index_col=0)
 
     # Create VCF file containing SNPs with multiplicity equal to number of genes in receptive field
+    # TODO: This is not used in predict.py. Use the VCF from chromatin.py instead.
     vcf_out_path = f'{args.out_dir}/snps_hg19.vcf'
     vcf_file_out = open(vcf_out_path, 'w')
     print('##fileformat=VCFv4.3', file=vcf_file_out)
@@ -46,7 +47,6 @@ def main():
         snp_chrom, snp_pos, ref, alt = row[0], row[1], row[3], row[4]
 
         # Get closest gene to SNP
-        # TODO: Can we get multiple genes in the receptive field instead?
         if args.all_in_receptive_field:
             genes_df = get_genes_in_receptive_field(snp_chrom, snp_pos, geneanno)
         else:
