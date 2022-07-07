@@ -19,11 +19,11 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     # Load all sed files and save
-    sed_files = natsorted(glob.glob(f"{args.batch_dir}/*/sed.csv"))
+    sed_files = natsorted(glob.glob(f"{args.batch_dir}/*/sed.tsv"))
     assert len(sed_files) == args.n_chunks, f"Expected {args.n_chunks} chunks but got {len(sed_files)} sed files"
 
     sed_df = pd.concat([pd.read_csv(sed_file, sep="\t") for sed_file in sed_files])
-    sed_df.to_csv(f"{args.out_dir}/sed.csv", sep="\t")
+    sed_df.to_csv(f"{args.out_dir}/sed.tsv", sep="\t")
 
 
 if __name__ == '__main__':
