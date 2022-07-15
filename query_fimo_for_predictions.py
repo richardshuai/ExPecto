@@ -24,7 +24,7 @@ def main():
     # Setup
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # Read sed df
+    # Read vcf df
     vcf_df = pd.read_csv(args.vcf_file, sep="\t", comment="#",
                          names=["CHROM", "POS", "ID", "REF", "ALT" , "QUAL", "FILTER", "INFO"])
 
