@@ -11,6 +11,10 @@ def main():
     parser = argparse.ArgumentParser(description='Query FIMO for each SNP in SED df')
     parser.add_argument("--sed_file")
     parser.add_argument("--motif_file")
+    parser.add_argument("--chunk_size", action="store", dest="chunk_size", type=int, default=None,
+                        help="Size of chunks for batching predictions")
+    parser.add_argument("--chunk_i", action="store", dest="chunk_i", type=int, default=None,
+                        help="Chunk index for current run, starting from 0")
     parser.add_argument("--upstream_bp", default=30)
     parser.add_argument("--downstream_bp", default=30)
     parser.add_argument("--hg19_fasta", default="resources/hg19.fa")
@@ -21,7 +25,11 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     # Read sed df
-    sed_df = pd.read_csv(args.sed_file, sep="\t", index_col=0)
+    sed_df = pd.read_csv(args.sed_file, sep="\t").iloc[:, 2:]
+
+    if args.chunk_i is not None:
+        sed_df = sed_df.iloc[args.chunk_i * args.chunk_size:(args.chunk_i + 1) * args.chunk_size]
+
     sed_df["seq"] = sed_df.apply(lambda x: read_seq(x[0], x[1], x["strand"], x[3], x[4],
                                                     args.hg19_fasta, args.upstream_bp, args.downstream_bp), axis=1)
 
@@ -56,6 +64,7 @@ def read_seq(chrom, pos, strand, ref_snp, alt_snp, hg19_fasta, upstream_bp, down
         assert (seq[downstream_bp] == ref_snp) or (seq[downstream_bp] == alt_snp), "fasta does not match VCF"
 
     return seq
+
 
 if __name__ == '__main__':
     main()
