@@ -17,6 +17,7 @@ def main():
                         help="Chunk index for current run, starting from 0")
     parser.add_argument("--upstream_bp", default=30)
     parser.add_argument("--downstream_bp", default=30)
+    parser.add_argument("--pval_match_threshold", default=1e-4)
     parser.add_argument("--hg19_fasta", default="resources/hg19.fa")
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_query_fimo_for_predictions', help='Output directory')
     args = parser.parse_args()
@@ -45,6 +46,18 @@ def main():
         subprocess.call('fimo --thresh 1 --text {} {}'
                         .format(args.motif_file, fimo_in_fasta),
                         shell=True, stdout=f)
+
+    column_names = ['motif_id', 'motif_alt_id', 'sequence_name', 'start',
+                    'stop', 'strand', 'score', 'p-value', 'q-value', 'matched_sequence']
+    fimo_df = pd.read_table(fimo_out, sep='\t', names=column_names, comment='#')
+
+    # subset fimo df to queries within range of variant
+    fimo_df = fimo_df[(fimo_df["start"] <= (args.upstream_bp + 1)) & (fimo_df["stop"] >= (args.upstream_bp + 1))]
+
+    # get most significant match for each motif-variant pair
+    fimo_df = fimo_df.sort_values(by="p-value").drop_duplicates(subset=["motif_id", "motif_alt_id", "sequence_name"], keep="first")
+
+    fimo_df.to_csv(f"{args.out_dir}/fimo_filtered.tsv", sep="\t", header=True)
 
 
 def read_seq(chrom, pos, strand, ref_snp, alt_snp, hg19_fasta, upstream_bp, downstream_bp):
