@@ -52,7 +52,7 @@ def main():
     fimo_df = pd.read_table(fimo_out, sep='\t', names=column_names, comment='#')
 
     # subset fimo df to queries within range of variant
-    fimo_df = fimo_df[(fimo_df["start"] <= (args.upstream_bp + 1)) & (fimo_df["stop"] >= (args.upstream_bp + 1))]
+    fimo_df = fimo_df[(fimo_df["start"] <= (args.bp_pad + 1)) & (fimo_df["stop"] >= (args.bp_pad + 1))]
 
     # get most significant match for each motif-variant pair
     fimo_df = fimo_df.sort_values(by="p-value").drop_duplicates(subset=["motif_id", "motif_alt_id", "sequence_name"], keep="first")
