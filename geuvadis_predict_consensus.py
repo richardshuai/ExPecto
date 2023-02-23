@@ -52,7 +52,7 @@ def main():
 
     # Split into eighths if option is set
     if args.num_chunks is not None:
-        gene_splits = np.array_split(genes, 8)
+        gene_splits = np.array_split(genes, args.num_chunks)
         genes = gene_splits[args.chunk_i]
         assert len(genes) > 0, "Gene split resulted in empty list"
 
