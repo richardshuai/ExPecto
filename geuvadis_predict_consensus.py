@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--beluga_model', type=str, default='./resources/deepsea.beluga.pth')
     parser.add_argument('--batch_size', action="store", dest="batch_size",
                         type=int, default=1024, help="Batch size for neural network predictions.")
+    parser.add_argument('--overwrite', action="store_true", dest="overwrite", default=False, help="If true, overwrite existing predictions. Otherwise, skip if h5 file is present.")
     parser.add_argument("--num_chunks", action="store", dest="num_chunks", type=int, default=None, help="Total number of chunks to split predictions")
     parser.add_argument("--chunk_i", action="store", dest="chunk_i", type=int, default=None, help="Chunk index for current run, starting from 0")
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_predict_consensus',
@@ -50,7 +51,7 @@ def main():
     shifts = np.array(list(range(-20000, 20000, 200)))
     genes = natsorted([os.path.basename(file) for file in glob.glob(f'{consensus_dir}/*')])
 
-    # Split into eighths if option is set
+    # Split into chunks if options are set
     if args.num_chunks is not None:
         gene_splits = np.array_split(genes, args.num_chunks)
         genes = gene_splits[args.chunk_i]
@@ -62,6 +63,11 @@ def main():
 
         preds_dir = f'{args.out_dir}/{gene}'
         os.makedirs(preds_dir, exist_ok=True)
+        
+        if not args.overwrite and os.path.exists(f'{preds_dir}/{gene}.h5'):
+            # skip if output h5 file already exists
+            print(f"Skipping gene {gene} since h5 is already present.")
+            continue
 
         fasta_record_ids = []
         sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_gz)
