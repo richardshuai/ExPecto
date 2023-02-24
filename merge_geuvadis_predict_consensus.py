@@ -25,7 +25,7 @@ def main():
 
     record_ids = None
     preds = []
-    for h5_file in tqdm(h5_files[:10]):
+    for h5_file in tqdm(h5_files):
         with h5py.File(h5_file, "r") as preds_h5:
             if record_ids is None:
                 record_ids = np.array([parse_record_id(x) for x in preds_h5["record_ids"]])
