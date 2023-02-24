@@ -30,13 +30,12 @@ def main():
             if record_ids is None:
                 record_ids = np.array([parse_record_id(x) for x in preds_h5["record_ids"]])
             else:
-                import pdb; pdb.set_trace()
                 curr_record_ids = np.array([parse_record_id(x) for x in preds_h5["record_ids"]])
                 assert (record_ids == curr_record_ids).all()
             preds.append(np.array(preds_h5["preds"]))
     
     preds = np.concatenate(preds)
-    with open(f"{args.out_dir}/expecto_preds.h5", "w") as h5_out:
+    with h5py.File(f"{args.out_dir}/expecto_preds.h5", "w") as h5_out:
         h5_out.create_dataset("record_ids", data=record_ids)
         h5_out.create_dataset("preds", data=preds)
         
