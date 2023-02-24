@@ -3,7 +3,7 @@ import argparse
 import glob
 import os
 import numpy as np
-
+from tqdm import tqdm
 import h5py
 from natsort import natsorted
 
@@ -25,12 +25,13 @@ def main():
 
     record_ids = None
     preds = []
-    for h5_file in h5_files:
+    for h5_file in tqdm(h5_files[:10]):
         with h5py.File(h5_file, "r") as preds_h5:
             if record_ids is None:
-                record_ids = preds_h5["record_ids"]
+                record_ids = np.array(preds_h5["record_ids"])
             else:
-                assert record_ids == preds_h5["record_ids"]
+                import pdb; pdb.set_trace()
+                assert (record_ids == np.array(preds_h5["record_ids"])).all()
             preds.append(np.array(preds_h5["preds"]))
     
     preds = np.concatenate(preds)
