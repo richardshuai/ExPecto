@@ -28,16 +28,27 @@ def main():
     for h5_file in tqdm(h5_files[:10]):
         with h5py.File(h5_file, "r") as preds_h5:
             if record_ids is None:
-                record_ids = np.array(preds_h5["record_ids"])
+                record_ids = np.array([parse_record_id(x) for x in preds_h5["record_ids"]])
             else:
                 import pdb; pdb.set_trace()
-                assert (record_ids == np.array(preds_h5["record_ids"])).all()
+                curr_record_ids = np.array([parse_record_id(x) for x in preds_h5["record_ids"]])
+                assert (record_ids == curr_record_ids).all()
             preds.append(np.array(preds_h5["preds"]))
     
     preds = np.concatenate(preds)
     with open(f"{args.out_dir}/expecto_preds.h5", "w") as h5_out:
         h5_out.create_dataset("record_ids", data=record_ids)
         h5_out.create_dataset("preds", data=preds)
+        
+        
+def parse_record_id(x):
+    """
+    Preprocess record ID to remove gene-specific info. e.g.
+    b'chr19:58832097-58897632|NA20828|-|1pIu' -> NA20828|1pIu
+    """
+    x = x.decode("utf-8")
+    x = x.split("|")
+    return f"{x[1]}{x[3]}"
 
 
 if __name__ == '__main__':
