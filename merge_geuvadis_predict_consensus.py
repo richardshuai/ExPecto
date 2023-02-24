@@ -36,7 +36,7 @@ def main():
     
     preds = np.concatenate(preds)
     with h5py.File(f"{args.out_dir}/expecto_preds.h5", "w") as h5_out:
-        h5_out.create_dataset("record_ids", data=record_ids)
+        h5_out.create_dataset("record_ids", data=np.array(record_ids, 'S'))
         h5_out.create_dataset("preds", data=preds)
         
         
