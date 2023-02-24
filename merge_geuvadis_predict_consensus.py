@@ -47,7 +47,7 @@ def parse_record_id(x):
     """
     x = x.decode("utf-8")
     x = x.split("|")
-    return f"{x[1]}{x[3]}"
+    return f"{x[1]}|{x[3]}"
 
 
 if __name__ == '__main__':
