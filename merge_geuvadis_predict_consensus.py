@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import h5py
 from natsort import natsorted
+from pathlib import Path
 
 
 def main():
@@ -35,7 +36,7 @@ def main():
             preds.append(np.array(preds_h5["preds"]))
 
     preds = np.stack(preds)
-    genes = [x.split("/")[0] for x in h5_files]
+    genes = [Path(x).stem for x in h5_files]
     with h5py.File(f"{args.out_dir}/expecto_preds.h5", "w") as h5_out:
         h5_out.create_dataset("record_ids", data=np.array(record_ids, 'S'))
         h5_out.create_dataset("genes", data=np.array(genes, 'S'))
