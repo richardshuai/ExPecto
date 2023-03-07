@@ -33,13 +33,15 @@ def main():
                 curr_record_ids = np.array([parse_record_id(x) for x in preds_h5["record_ids"]])
                 assert (record_ids == curr_record_ids).all()
             preds.append(np.array(preds_h5["preds"]))
-    
+
     preds = np.stack(preds)
+    genes = [x.split("/")[0] for x in h5_files]
     with h5py.File(f"{args.out_dir}/expecto_preds.h5", "w") as h5_out:
         h5_out.create_dataset("record_ids", data=np.array(record_ids, 'S'))
+        h5_out.create_dataset("genes", data=np.array(genes, 'S'))
         h5_out.create_dataset("preds", data=preds)
-        
-        
+
+
 def parse_record_id(x):
     """
     Preprocess record ID to remove gene-specific info. e.g.
