@@ -63,7 +63,7 @@ def main():
 
         preds_dir = f'{args.out_dir}/{gene}'
         os.makedirs(preds_dir, exist_ok=True)
-        
+
         if not args.overwrite and os.path.exists(f'{preds_dir}/{gene}.h5'):
             # skip if output h5 file already exists
             print(f"Skipping gene {gene} since h5 is already present.")
@@ -110,7 +110,8 @@ def main():
         expecto_preds = bst.predict(expecto_features)
 
         with h5py.File(f'{preds_dir}/{gene}.h5', 'w') as preds_h5:
-            preds_h5.create_dataset('preds', data=expecto_preds)
+            preds_h5.create_dataset('chromatin_preds', data=preds)  # n_samples x n_bins x n_features
+            preds_h5.create_dataset('expecto_preds', data=expecto_preds)
             preds_h5.create_dataset('record_ids', data=np.array(fasta_record_ids, 'S'))
 
 
