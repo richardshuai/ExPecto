@@ -58,12 +58,12 @@ def main():
 
         # Predict on reference
         gene = gene.lower()
-        ref_fasta = f'{consensus_dir}/{gene}/ref_roi.fa'
+        ref_fasta = f'{consensus_dir}/{gene}/ref.fa'
         ref_id, ref_seq = get_1_id_and_seq_from_fasta(ref_fasta)
 
-        if strand == '-':
-            # TODO: needed due to ref seq glitch not properly reverse complemented
-            ref_seq = reverse_complement(ref_seq.upper())
+        # if strand == '-':
+        #     # TODO: needed due to ref seq glitch not properly reverse complemented
+        #     ref_seq = reverse_complement(ref_seq.upper())
 
         record_ids.append(ref_id)
         seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(ref_seq, strand, shifts)).astype(np.float32)
@@ -90,9 +90,10 @@ def main():
             np.exp(-0.1 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0),
             np.exp(-0.2 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0)])
 
-        expecto_ref_features = xgb.DMatrix(
-            np.sum(pos_weights[None, :, :, None] * beluga_ref_preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
-        )
+        # "backwards compatibility"
+        features = np.sum(pos_weights[None, :, :, None] * beluga_ref_preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
+        features = np.concatenate([np.zeros((1, 10, 1)), features.reshape((-1, 10, 2002))], axis=2).reshape((-1, 20030))  # add 0 shift
+        expecto_ref_features = xgb.DMatrix(features)
 
         expecto_ref_preds.append(bst.predict(expecto_ref_features))
 
@@ -125,7 +126,7 @@ def get_seq_shifts_for_sample_seq(sample_seq, strand, shifts, windowsize=2000):
     Get shifts for sequence, centered at TSS.
     windowsize denotes input size for neural network, which is 2000 for default Beluga model.
     """
-    # assumes TSS is at center of sequence, with less sequence upstream of seq is even length
+    # assumes TSS is at center of sequence, with less sequence upstream if seq is even length
     if strand == '+':
         strand = 1
         tss_i = (len(sample_seq) - 1) // 2

@@ -103,14 +103,18 @@ def main():
             np.exp(-0.1 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0),
             np.exp(-0.2 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0)])
 
-        expecto_features = xgb.DMatrix(
-            np.sum(pos_weights[None, :, :, None] * preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
-        )
+        # "backwards compatibility"
+        features = np.sum(pos_weights[None, :, :, None] * preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
+        features = np.concatenate([np.zeros((1, 10, 1)), features.reshape((-1, 10, 2002))], axis=2).reshape((-1, 20030))  # add 0 shift
+        expecto_features = xgb.DMatrix(features)
 
         expecto_preds = bst.predict(expecto_features)
 
-        with h5py.File(f'{preds_dir}/{gene}.h5', 'w') as preds_h5:
+        with h5py.File(f'{preds_dir}/{gene}_chromatin.h5', 'w') as preds_h5:
             preds_h5.create_dataset('chromatin_preds', data=preds)  # n_samples x n_bins x n_features
+            preds_h5.create_dataset('record_ids', data=np.array(fasta_record_ids, 'S'))
+
+        with h5py.File(f'{preds_dir}/{gene}.h5', 'w') as preds_h5:
             preds_h5.create_dataset('expecto_preds', data=expecto_preds)
             preds_h5.create_dataset('record_ids', data=np.array(fasta_record_ids, 'S'))
 

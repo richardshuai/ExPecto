@@ -129,13 +129,16 @@ def main():
         np.exp(-0.1 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0),
         np.exp(-0.2 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0)])
 
-    expecto_ref_features = xgb.DMatrix(
-        np.sum(pos_weights[None, :, :, None] * beluga_ref_preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
-    )
+    # "backwards compatibility"
+    ref_features = np.sum(pos_weights[None, :, :, None] * beluga_ref_preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
+    ref_features = np.concatenate([np.zeros((1, 10, 1)), ref_features.reshape((-1, 10, 2002))], axis=2).reshape((-1, 20030))  # add 0 shift
+    expecto_ref_features = xgb.DMatrix(ref_features)
 
-    expecto_alt_features = xgb.DMatrix(
-        np.sum(pos_weights[None, :, :, None] * beluga_alt_preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
-    )
+    # "backwards compatibility"
+    alt_features = np.sum(pos_weights[None, :, :, None] * beluga_alt_preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
+    alt_features = np.concatenate([np.zeros((1, 10, 1)), alt_features.reshape((-1, 10, 2002))], axis=2).reshape((-1, 20030))  # add 0 shift
+    expecto_alt_features = xgb.DMatrix(alt_features)
+
     expecto_ref_preds = bst.predict(expecto_ref_features)
     expecto_alt_preds = bst.predict(expecto_alt_features)
 
