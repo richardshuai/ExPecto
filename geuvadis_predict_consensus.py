@@ -72,11 +72,7 @@ def main():
         fasta_record_ids = []
         sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_gz)
         preds = []
-        j = 0
         for sample_seq, record_id in sample_seqs_gen:
-            j += 1
-            if j == 5:
-                break
             strand = record_id.split('|')[-2]
             seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
 
