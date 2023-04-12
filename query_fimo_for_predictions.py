@@ -16,7 +16,6 @@ def main():
     parser.add_argument("--chunk_i", action="store", dest="chunk_i", type=int, default=None,
                         help="Chunk index for current run, starting from 0")
     parser.add_argument("--bp_pad", default=30)
-    parser.add_argument("--pval_match_threshold", default=1e-4)
     parser.add_argument("--hg19_fasta", default="resources/hg19.fa")
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_query_fimo_for_predictions', help='Output directory')
     args = parser.parse_args()
