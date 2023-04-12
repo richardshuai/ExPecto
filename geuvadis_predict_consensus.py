@@ -72,7 +72,11 @@ def main():
         fasta_record_ids = []
         sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_gz)
         preds = []
+        j = 0
         for sample_seq, record_id in sample_seqs_gen:
+            j += 1
+            if j == 5:
+                break
             strand = record_id.split('|')[-2]
             seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
 
@@ -104,8 +108,8 @@ def main():
             np.exp(-0.2 * np.abs(pos_weight_shifts) / 200) * (pos_weight_shifts >= 0)])
 
         # "backwards compatibility"
-        features = np.sum(pos_weights[None, :, :, None] * preds[:, None, :, :], axis=2).reshape(-1, 10 * 2002)
-        features = np.concatenate([np.zeros((1, 10, 1)), features.reshape((-1, 10, 2002))], axis=2).reshape((-1, 20030))  # add 0 shift
+        features = np.sum(pos_weights[None, :, :, None] * preds[:, None, :, :], axis=2)
+        features = np.concatenate([np.zeros((features.shape[0], 10, 1)), features], axis=2).reshape((-1, 20030))  # add 0 shift
         expecto_features = xgb.DMatrix(features)
 
         expecto_preds = bst.predict(expecto_features)
