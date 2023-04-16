@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import os
+from pathlib import Path
 
 from Beluga import Beluga
 from expecto_utils import encodeSeqs
@@ -24,6 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description='Predict expression for consensus sequences using ExPecto')
     parser.add_argument('expecto_model')
     parser.add_argument('consensus_dir')
+    parser.add_argument('genes_file')
     parser.add_argument('--beluga_model', type=str, default='./resources/deepsea.beluga.pth')
     parser.add_argument('--batch_size', action="store", dest="batch_size",
                         type=int, default=1024, help="Batch size for neural network predictions.")
@@ -35,6 +37,7 @@ def main():
     args = parser.parse_args()
 
     consensus_dir = args.consensus_dir
+    genes_file = args.genes_file
 
     # Setup
     os.makedirs(args.out_dir, exist_ok=True)
@@ -51,6 +54,11 @@ def main():
     shifts = np.array(list(range(-20000, 20000, 200)))
     genes = natsorted([os.path.basename(file) for file in glob.glob(f'{consensus_dir}/*')])
 
+    # get strand
+    genes_df = pd.read_csv(genes_file, names=['ens_id', 'chrom', 'bp', 'gene_symbol', 'strand'], index_col=False)
+    genes_df['gene_symbol'] = genes_df['gene_symbol'].fillna(genes_df['ens_id']).str.lower()
+    genes_df = genes_df.set_index('gene_symbol')
+
     # Split into chunks if options are set
     if args.num_chunks is not None:
         gene_splits = np.array_split(genes, args.num_chunks)
@@ -59,7 +67,9 @@ def main():
 
     print("Predicting chromatin for all samples for all genes...")
     for gene in tqdm(genes):
-        fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
+        # fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
+        fasta_files = glob.glob(f'{consensus_dir}/{gene}/samples/*.fa')
+        strand = genes_df.loc[gene, 'strand']
 
         preds_dir = f'{args.out_dir}/{gene}'
         os.makedirs(preds_dir, exist_ok=True)
@@ -70,10 +80,9 @@ def main():
             continue
 
         fasta_record_ids = []
-        sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_gz)
+        sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_files)
         preds = []
-        for sample_seq, record_id in sample_seqs_gen:
-            strand = record_id.split('|')[-2]
+        for sample_seq, record_id in tqdm(sample_seqs_gen, total=len(fasta_files)):
             seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
 
             sample_preds = np.zeros((seq_shifts.shape[0], 2002))
@@ -119,16 +128,28 @@ def main():
             preds_h5.create_dataset('record_ids', data=np.array(fasta_record_ids, 'S'))
 
 
-def gen_sample_seqs_and_id_for_gene(fasta_gz):
+def gen_sample_seqs_and_id_for_gene(fasta_files):
     """
     Create generator for 1-hot encoded sequences for input into Basenji2 for all samples for a given gene.
     fasta_gz: consensus seqs in the form of gzipped fasta e.g. {gene}/{gene}.fa.gz
     """
-    sample_seqs = []
-    with gzip.open(fasta_gz, 'rt') as f:
-        for record in SeqIO.parse(f, 'fasta'):
+
+    for fasta_file in fasta_files:
+        for record in SeqIO.parse(fasta_file, 'fasta'):
             seq = str(record.seq).upper()
-            yield seq, record.id
+            yield seq, f"{record.id}|{Path(fasta_file).stem}"
+
+
+# def gen_sample_seqs_and_id_for_gene(fasta_gz):
+#     """
+#     Create generator for 1-hot encoded sequences for input into Basenji2 for all samples for a given gene.
+#     fasta_gz: consensus seqs in the form of gzipped fasta e.g. {gene}/{gene}.fa.gz
+#     """
+#     sample_seqs = []
+#     with gzip.open(fasta_gz, 'rt') as f:
+#         for record in SeqIO.parse(f, 'fasta'):
+#             seq = str(record.seq).upper()
+#             yield seq, record.id
 
 
 def get_seq_shifts_for_sample_seq(sample_seq, strand, shifts, windowsize=2000):
@@ -136,13 +157,14 @@ def get_seq_shifts_for_sample_seq(sample_seq, strand, shifts, windowsize=2000):
     Get shifts for sequence, centered at TSS.
     windowsize denotes input size for neural network, which is 2000 for default Beluga model.
     """
-    # assumes TSS is at center of sequence, with less sequence upstream of seq is even length
+    # assumes TSS is at center of sequence, with less sequence upstream of seq is even length. <-- outdated
+    # We are using basenji consensus seqs as opposed to enformer consensus seqs here <-- outdated
+    # Ok, now we are using enformer consensus seqs, so tss is always at len(sample_seq) // 2
+    tss_i = len(sample_seq) // 2
     if strand == '+':
         strand = 1
-        tss_i = (len(sample_seq) - 1) // 2
     elif strand == '-':
         strand = -1
-        tss_i = len(sample_seq) // 2
     else:
         assert False, f'strand {strand} not recognized'
 
