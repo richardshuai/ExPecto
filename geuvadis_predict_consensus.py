@@ -20,6 +20,8 @@ import seaborn as sns
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import r2_score
 
+ENFORMER_SEQ_LENGTH = 393216
+
 
 def main():
     parser = argparse.ArgumentParser(description='Predict expression for consensus sequences using ExPecto')
@@ -69,14 +71,20 @@ def main():
     for gene in tqdm(genes):
         # fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
         fasta_files = glob.glob(f'{consensus_dir}/{gene}/samples/*.fa')
+
+        is_truncated = check_is_truncated(fasta_files)
+
         strand = genes_df.loc[gene, 'strand']
-        if strand == '+':
-            continue
+
+        manual_overwrite = (is_truncated or strand == '+')  # TODO: temporary overwrite truncated sequences and plus strand sequences
+
+        if is_truncated:
+            print(f"Gene {gene} is truncated. Overwriting predictions.")
 
         preds_dir = f'{args.out_dir}/{gene}'
         os.makedirs(preds_dir, exist_ok=True)
 
-        if not args.overwrite and os.path.exists(f'{preds_dir}/{gene}.h5'):
+        if not manual_overwrite and not args.overwrite and os.path.exists(f'{preds_dir}/{gene}.h5'):
             # skip if output h5 file already exists
             print(f"Skipping gene {gene} since h5 is already present.")
             continue
@@ -135,11 +143,59 @@ def gen_sample_seqs_and_id_for_gene(fasta_files):
     Create generator for 1-hot encoded sequences for input into Basenji2 for all samples for a given gene.
     fasta_gz: consensus seqs in the form of gzipped fasta e.g. {gene}/{gene}.fa.gz
     """
-
     for fasta_file in fasta_files:
         for record in SeqIO.parse(fasta_file, 'fasta'):
             seq = str(record.seq).upper()
+
+            interval = record.id.split(":")[1]
+            if interval.startswith("-"):
+                # if sequence has negative sign in interval, it means the sequence is definitely missing the beginning
+
+                # sanity check
+                bp_start = -int(interval.split("-")[-2])  # we need to parse like this because - sign is in front of first number
+                bp_end = int(interval.split("-")[-1])
+                assert bp_end - bp_start + 1 == ENFORMER_SEQ_LENGTH
+
+                # pad with Ns to beginning of sequence
+                seq = "N" * (ENFORMER_SEQ_LENGTH - len(seq)) + seq
+
+            else:
+                # sanity check
+                bp_start, bp_end = map(int, interval.split("-"))
+                assert bp_end - bp_start + 1 == ENFORMER_SEQ_LENGTH
+
+                # check if sequence is missing end of sequence
+                if len(seq) < ENFORMER_SEQ_LENGTH:
+                    # pad with Ns to end of sequence
+                    seq = seq + "N" * (ENFORMER_SEQ_LENGTH - len(seq))
+
+            assert len(seq) == ENFORMER_SEQ_LENGTH, f"Sequence length is {len(seq)} for {record.id}"  # one last check
             yield seq, f"{record.id}|{Path(fasta_file).stem}"
+
+
+def check_is_truncated(fasta_files: list) -> bool:
+    """
+    Check whether consensus sequences are truncated at the beginning or end of the gene.
+    """
+    fasta_file = fasta_files[0]  # check first file
+    for record in SeqIO.parse(fasta_file, 'fasta'):
+        seq = str(record.seq).upper()
+
+        interval = record.id.split(":")[1]
+        if interval.startswith("-"):
+            # if sequence has negative sign in interval, it means the sequence is definitely missing the beginning
+            return True
+        else:
+            bp_start, bp_end = map(int, interval.split("-"))
+            assert bp_end - bp_start + 1 == ENFORMER_SEQ_LENGTH
+            # check if sequence is missing end of sequence
+            if len(seq) < ENFORMER_SEQ_LENGTH:
+                # pad with Ns to end of sequence
+                return True
+
+    return False
+
+
 
 
 # def gen_sample_seqs_and_id_for_gene(fasta_gz):
@@ -170,6 +226,7 @@ def get_seq_shifts_for_sample_seq(sample_seq, strand, shifts, windowsize=2000):
     # else:
     #     assert False, f'strand {strand} not recognized'
     # Ok, now we are using enformer consensus seqs, so tss is always at len(sample_seq) // 2
+
     tss_i = len(sample_seq) // 2
     if strand == '+':
         strand = 1
