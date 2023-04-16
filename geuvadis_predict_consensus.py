@@ -70,6 +70,8 @@ def main():
         # fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
         fasta_files = glob.glob(f'{consensus_dir}/{gene}/samples/*.fa')
         strand = genes_df.loc[gene, 'strand']
+        if strand == '+':
+            continue
 
         preds_dir = f'{args.out_dir}/{gene}'
         os.makedirs(preds_dir, exist_ok=True)
@@ -159,6 +161,14 @@ def get_seq_shifts_for_sample_seq(sample_seq, strand, shifts, windowsize=2000):
     """
     # assumes TSS is at center of sequence, with less sequence upstream of seq is even length. <-- outdated
     # We are using basenji consensus seqs as opposed to enformer consensus seqs here <-- outdated
+    # if strand == '+':
+    #     strand = 1
+    #     tss_i = (len(sample_seq) - 1) // 2
+    # elif strand == '-':
+    #     strand = -1
+    #     tss_i = len(sample_seq) // 2
+    # else:
+    #     assert False, f'strand {strand} not recognized'
     # Ok, now we are using enformer consensus seqs, so tss is always at len(sample_seq) // 2
     tss_i = len(sample_seq) // 2
     if strand == '+':
