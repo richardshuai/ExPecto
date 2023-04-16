@@ -82,7 +82,7 @@ def main():
         fasta_record_ids = []
         sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_files)
         preds = []
-        for sample_seq, record_id in tqdm(sample_seqs_gen, total=len(fasta_files)):
+        for sample_seq, record_id in sample_seqs_gen:
             seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
 
             sample_preds = np.zeros((seq_shifts.shape[0], 2002))
