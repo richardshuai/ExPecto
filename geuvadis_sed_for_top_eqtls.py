@@ -208,6 +208,7 @@ def seqs_to_predict(eqtls_df, consensus_dir):
         ref_id, ref_seq = get_1_id_and_seq_from_fasta(ref_fasta)
 
         fasta_seq_length = len(ref_seq)
+        ref_id = ref_id.split("|")[0]
         ref_chr = int(ref_id.split(':')[0].replace("chr", ""))
         ref_start, ref_end = map(int, ref_id.split(':')[1].split('-'))
         assert (ref_end - ref_start + 1) == fasta_seq_length, "record ID does not match fasta seq length"

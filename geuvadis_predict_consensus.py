@@ -76,7 +76,7 @@ def main():
 
         strand = genes_df.loc[gene, 'strand']
 
-        manual_overwrite = (is_truncated or strand == '+')  # TODO: temporary overwrite truncated sequences and plus strand sequences
+        manual_overwrite = is_truncated  # TODO: temporary overwrite truncated sequences
 
         if is_truncated:
             print(f"Gene {gene} is truncated. Overwriting predictions.")
