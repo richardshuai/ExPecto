@@ -88,7 +88,7 @@ def main():
                     target_bin = get_snp_bin(row["bp"], row["bp"], row["strand"], model="expecto")
                 else:
                     target_bin = get_snp_bin(row["SNPpos"], row["TSSpos_x"], row["strand"], model="expecto")
-                expecto_gm12878_preds = expecto_preds[:, target_bin, expecto_gm12878.index]
+                expecto_gm12878_preds = expecto_preds[:, target_bin, np.array(expecto_gm12878.index)]
                 expecto_gene_df = pd.DataFrame(expecto_gm12878_preds, index=sample_names, columns=expecto_gm12878["ID"])
 
             # save to CSV
@@ -123,7 +123,7 @@ def process_eqtl_basenji(index_row: tuple, args: argparse.Namespace, basenji_fea
                 bin = get_snp_bin(snp_pos=row["bp"], tss_pos=row["bp"], strand=row["strand"], model="basenji")  # set snp_pos to tss_pos to get TSS preds
             else:
                 bin = get_snp_bin(snp_pos=row["SNPpos"], tss_pos=row["TSSpos_x"], strand=row["strand"], model="basenji")
-            basenji_gm12878_preds = basenji_preds[bin, basenji_features_df.index]
+            basenji_gm12878_preds = basenji_preds[bin, np.array(basenji_features_df.index)]
 
             # store preds
             basenji_preds_df.loc[Path(sample_file).stem, :] = basenji_gm12878_preds
