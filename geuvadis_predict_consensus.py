@@ -32,6 +32,7 @@ def main():
     parser.add_argument('--batch_size', action="store", dest="batch_size",
                         type=int, default=1024, help="Batch size for neural network predictions.")
     parser.add_argument('--overwrite', action="store_true", dest="overwrite", default=False, help="If true, overwrite existing predictions. Otherwise, skip if h5 file is present.")
+    parser.add_argument('--exp_only', action="store_true", dest="exp_only", default=False, help="If true, load in chromatin preds and make predictions.")
     parser.add_argument("--num_chunks", action="store", dest="num_chunks", type=int, default=None, help="Total number of chunks to split predictions")
     parser.add_argument("--chunk_i", action="store", dest="chunk_i", type=int, default=None, help="Chunk index for current run, starting from 0")
     parser.add_argument('-o', dest="out_dir", type=str, default='temp_predict_consensus',
@@ -69,45 +70,41 @@ def main():
 
     print("Predicting chromatin for all samples for all genes...")
     for gene in tqdm(genes):
-        # fasta_gz = f'{consensus_dir}/{gene}/{gene}.fa.gz'
         fasta_files = glob.glob(f'{consensus_dir}/{gene}/samples/*.fa')
-
-        is_truncated = check_is_truncated(fasta_files)
-
         strand = genes_df.loc[gene, 'strand']
-
-        manual_overwrite = is_truncated  # TODO: temporary overwrite truncated sequences
-
-        if is_truncated:
-            print(f"Gene {gene} is truncated. Overwriting predictions.")
 
         preds_dir = f'{args.out_dir}/{gene}'
         os.makedirs(preds_dir, exist_ok=True)
 
-        if not manual_overwrite and not args.overwrite and os.path.exists(f'{preds_dir}/{gene}.h5'):
+        if not args.overwrite and os.path.exists(f'{preds_dir}/{gene}.h5'):
             # skip if output h5 file already exists
             print(f"Skipping gene {gene} since h5 is already present.")
             continue
 
-        fasta_record_ids = []
-        sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_files)
-        preds = []
-        for sample_seq, record_id in sample_seqs_gen:
-            seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
+        if args.exp_only:
+            with h5py.File(f"{preds_dir}/{gene}_chromatin.h5", "r") as f:
+                preds = np.array(f['chromatin_preds'])
+                fasta_record_ids = [x.decode('utf-8') for x in f['record_ids']]
+        else:
+            fasta_record_ids = []
+            sample_seqs_gen = gen_sample_seqs_and_id_for_gene(fasta_files)
+            preds = []
+            for sample_seq, record_id in sample_seqs_gen:
+                seq_shifts = encodeSeqs(get_seq_shifts_for_sample_seq(sample_seq, strand, shifts)).astype(np.float32)
 
-            sample_preds = np.zeros((seq_shifts.shape[0], 2002))
-            for i in range(0, seq_shifts.shape[0], args.batch_size):
-                batch = torch.from_numpy(seq_shifts[i * args.batch_size:(i+1) * args.batch_size]).to(device)
-                batch = batch.unsqueeze(2)
-                sample_preds[i * args.batch_size:(i+1) * args.batch_size] = model.forward(batch).cpu().detach().numpy()
+                sample_preds = np.zeros((seq_shifts.shape[0], 2002))
+                for i in range(0, seq_shifts.shape[0], args.batch_size):
+                    batch = torch.from_numpy(seq_shifts[i * args.batch_size:(i+1) * args.batch_size]).to(device)
+                    batch = batch.unsqueeze(2)
+                    sample_preds[i * args.batch_size:(i+1) * args.batch_size] = model.forward(batch).cpu().detach().numpy()
 
-            # avg the reverse complement
-            sample_preds = (sample_preds[:sample_preds.shape[0] // 2] + sample_preds[sample_preds.shape[0] // 2:]) / 2
-            fasta_record_ids.append(record_id)
-            preds.append(sample_preds)
+                # avg the reverse complement
+                sample_preds = (sample_preds[:sample_preds.shape[0] // 2] + sample_preds[sample_preds.shape[0] // 2:]) / 2
+                fasta_record_ids.append(record_id)
+                preds.append(sample_preds)
 
-        preds = np.stack(preds, axis=0)
-        # assert preds.shape == (len(fasta_record_ids), shifts.shape[0], 2002)
+            preds = np.stack(preds, axis=0)
+            # assert preds.shape == (len(fasta_record_ids), shifts.shape[0], 2002)
 
         pos_weight_shifts = shifts
         pos_weights = np.vstack([
