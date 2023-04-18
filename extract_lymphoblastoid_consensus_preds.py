@@ -131,7 +131,7 @@ def process_eqtl_basenji(index_row: tuple, args: argparse.Namespace, basenji_fea
             basenji_preds_df.loc[Path(sample_file).stem, :] = basenji_gm12878_preds
 
     # save to CSV
-    if not basenji_preds_df.isna().any().any():
+    if basenji_preds_df.isna().any().any():
         print(f"WARNING: NaNs found in basenji_gene_df for {gene}")
     basenji_preds_df.to_csv(f"{preds_out_dir}/basenji_preds.csv")
 
