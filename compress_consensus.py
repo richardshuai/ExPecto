@@ -36,9 +36,11 @@ def main():
         with h5py.File(center_h5_file, "r") as f:
             preds = f["preds"][...]
             preds = preds.astype(np.float16)
+            record_ids = f["record_ids"][...]
             out_file = f"{center_out_dir}/{Path(center_h5_file).name}"
             with h5py.File(out_file, "w") as f_out:
                 f_out.create_dataset("preds", data=preds, compression="gzip", compression_opts=9)
+                f_out.create_dataset("record_ids", data=record_ids)
 
         # delete original file
         os.remove(center_h5_file)
@@ -55,13 +57,13 @@ def main():
     print("Reducing precision for all bin h5 files...")
     for sample_h5_file in tqdm(sample_h5_files):
         sample_out_dir = f"{args.out_dir}/{Path(sample_h5_file).parent.parent.name}/all_bins_per_sample"
-        Path(sample_out_dir).mkdir(parents=True, exist_ok=True)
+
         with h5py.File(sample_h5_file, "r") as f:
-            preds = f["preds"][...]
-            preds = preds.astype(np.float16)
+            all_preds = f["all_preds"][...]
+            all_preds = all_preds.astype(np.float16)
             out_file = f"{sample_out_dir}/{Path(sample_h5_file).name}"
             with h5py.File(out_file, "w") as f_out:
-                f_out.create_dataset("preds", data=preds, compression="gzip", compression_opts=9)
+                f_out.create_dataset("all_preds", data=all_preds, compression="gzip", compression_opts=9)
 
         # delete original file
         os.remove(sample_h5_file)
