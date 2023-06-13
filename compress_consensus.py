@@ -18,7 +18,7 @@ def main():
     args = parser.parse_args()
 
     # setup
-    os.makedirs(args.out_dir, exist_ok=True)
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
 
     # load in h5 file predictions for center bins
     center_h5_files = natsorted(glob.glob(f"{args.basenji_consensus_preds_dir}/*/*.h5"))
@@ -32,6 +32,7 @@ def main():
     print("Reducing precision for center bin h5 files...")
     for center_h5_file in tqdm(center_h5_files):
         center_out_dir = f"{args.out_dir}/{Path(center_h5_file).parent.name}"
+        Path(center_out_dir).mkdir(parents=True, exist_ok=True)
         with h5py.File(center_h5_file, "r") as f:
             preds = f["preds"][...]
             preds = preds.astype(np.float16)
@@ -54,6 +55,7 @@ def main():
     print("Reducing precision for all bin h5 files...")
     for sample_h5_file in tqdm(sample_h5_files):
         sample_out_dir = f"{args.out_dir}/{Path(sample_h5_file).parent.parent.name}/all_bins_per_sample"
+        Path(sample_out_dir).mkdir(parents=True, exist_ok=True)
         with h5py.File(sample_h5_file, "r") as f:
             preds = f["preds"][...]
             preds = preds.astype(np.float16)
