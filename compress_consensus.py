@@ -57,7 +57,7 @@ def main():
     print("Reducing precision for all bin h5 files...")
     for sample_h5_file in tqdm(sample_h5_files):
         sample_out_dir = f"{args.out_dir}/{Path(sample_h5_file).parent.parent.name}/all_bins_per_sample"
-
+        Path(sample_out_dir).mkdir(parents=True, exist_ok=True)
         with h5py.File(sample_h5_file, "r") as f:
             all_preds = f["all_preds"][...]
             all_preds = all_preds.astype(np.float16)
