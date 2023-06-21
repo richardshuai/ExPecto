@@ -22,7 +22,7 @@ def main():
     parser.add_argument("--beluga_features_tsv", type=str, required=True, help="TSV file containing beluga features")
     parser.add_argument('--eqtls_csv', type=str, required=True, help="CSV file containing top eqtls")
     parser.add_argument('--genes_csv', type=str, required=True, help="CSV file containing all genes")
-    parser.add_argument("--extract_tss", action="store_true", default=False, help="Extract predictions at TSS instead of at SNP")
+    parser.add_argument("--extract_mode", type=str, default="snp", help="Extract predictions at SNP bin, TSS bin, or 50 bins symmetrically from TSS", choices=["snp", "tss", "50_bins"])
     parser.add_argument('--model', type=str, required=True, help="Model name to extract for", choices=["basenji", "expecto"])
     parser.add_argument("--out_dir", type=str, required=True)
     args = parser.parse_args()
@@ -59,24 +59,26 @@ def main():
         # Basenji
         f = partial(process_eqtl_basenji, args=args, basenji_features_df=basenji_gm12878)
         with mp.Pool() as pool:
-            if args.extract_tss:
-                _ = list(tqdm(pool.imap_unordered(f, genes_df.iterrows()), total=genes_df.shape[0]))
-            else:
+            if args.extract_mode == "snp":
                 _ = list(tqdm(pool.imap_unordered(f, eqtls_df.iterrows()), total=eqtls_df.shape[0]))
+            else:
+                _ = list(tqdm(pool.imap_unordered(f, genes_df.iterrows()), total=genes_df.shape[0]))
 
     elif args.model == "expecto":
         # ExPecto
-        df = genes_df if args.extract_tss else eqtls_df
+        df = genes_df if args.extract_mode != "snp" else eqtls_df
         for i, row in tqdm(df.iterrows(), total=df.shape[0]):
             gene = row.name
+            if gene not in ["snhg5", "flvcr1-dt", "rps26", "slfn5", "pex6"]:
+                continue
 
-            if args.extract_tss:
-                # Extract preds at TSS per gene
-                preds_out_dir = f"{args.out_dir}/{gene}"
-            else:
+            if args.extract_mode == "snp":
                 # Extract preds at SNP per gene-SNP pair
                 snp = row["SNP_ID"]
                 preds_out_dir = f"{args.out_dir}/{gene}_{snp}"
+            else:
+                # Extract preds at TSS per gene
+                preds_out_dir = f"{args.out_dir}/{gene}"
             Path(preds_out_dir).mkdir(parents=True, exist_ok=True)
 
             # read in expecto preds
@@ -84,29 +86,45 @@ def main():
             with h5py.File(chromatin_file, "r") as gene_h5:
                 expecto_preds = gene_h5["chromatin_preds"]
                 sample_names = [x.decode("utf-8").split("|")[1] for x in gene_h5["record_ids"]]
-                if args.extract_tss:
-                    target_bin = get_snp_bin(row["bp"], row["bp"], row["strand"], model="expecto")
-                else:
-                    target_bin = get_snp_bin(row["SNPpos"], row["TSSpos_x"], row["strand"], model="expecto")
-                expecto_gm12878_preds = expecto_preds[:, target_bin, np.array(expecto_gm12878.index)]
-                expecto_gene_df = pd.DataFrame(expecto_gm12878_preds, index=sample_names, columns=expecto_gm12878["ID"])
 
-            # save to CSV
-            expecto_gene_df.to_csv(f"{preds_out_dir}/expecto_preds.csv")
+                if args.extract_mode != "50_bins":
+                    if args.extract_mode == "snp":
+                        target_bin = get_snp_bin(row["SNPpos"], row["TSSpos_x"], row["strand"], model="expecto")
+                    elif args.extract_mode == "tss":
+                        target_bin = get_snp_bin(row["bp"], row["bp"], row["strand"], model="expecto")  # extract tss bin by setting snp pos to tss pos
+                    expecto_gm12878_preds = expecto_preds[:, target_bin, np.array(expecto_gm12878.index)]
+                    expecto_gene_df = pd.DataFrame(expecto_gm12878_preds, index=sample_names, columns=expecto_gm12878["ID"])
+                    expecto_gene_df.to_csv(f"{preds_out_dir}/expecto_preds.csv")
+                else:
+                    target_bin = get_snp_bin(row["bp"], row["bp"], row["strand"], model="expecto")  # extract tss bin by setting snp pos to tss pos
+
+                    # extract 50 bins symetrically from TSS
+                    with h5py.File(f"{preds_out_dir}/gm12878_preds.h5", "w") as h5f:
+                        expecto_gm12878_preds = expecto_preds[:, target_bin - 50:target_bin + 51, np.array(expecto_gm12878.index)].astype(np.float16)
+
+                        # save the data
+                        h5f.create_dataset("all_preds", data=expecto_gm12878_preds, compression="gzip", compression_opts=9)
+                        # save the sample names
+                        h5f.create_dataset("sample_names", data=np.array(sample_names, dtype="S"))
+                        # save the feature labels
+                        h5f.create_dataset("features", data=np.array(expecto_gm12878["ID"], dtype=h5py.special_dtype(vlen=str)))
 
 
 def process_eqtl_basenji(index_row: tuple, args: argparse.Namespace, basenji_features_df: pd.DataFrame):
     _, row = index_row
     gene = row.name
-    if args.extract_tss:
+    if args.extract_mode == "tss":
         # Extract preds at TSS per gene
         preds_out_dir = f"{args.out_dir}/{gene}"
         if os.path.exists(f"{preds_out_dir}/basenji_preds.csv"):
             return
-    else:
+    elif args.extract_mode == "snp":
         # Extract preds at SNP per gene-SNP pair
         snp = row["SNP_ID"]
         preds_out_dir = f"{args.out_dir}/{gene}_{snp}"
+    else:
+        # extract all bins
+        preds_out_dir = f"{args.out_dir}/{gene}"
 
     Path(preds_out_dir).mkdir(parents=True, exist_ok=True)
 
@@ -114,26 +132,46 @@ def process_eqtl_basenji(index_row: tuple, args: argparse.Namespace, basenji_fea
     sample_files = glob.glob(f"{args.basenji_preds_dir}/{gene}/all_bins_per_sample/*.h5")
     sample_names = [Path(x).stem for x in sample_files]
 
-    # initialize pd dataframe of NaNs to store preds
-    basenji_preds_df = pd.DataFrame(index=sample_names, columns=basenji_features_df["ID"])
+    if args.extract_mode != "50_bins":
+        # initialize pd dataframe of NaNs to store preds
+        basenji_preds_df = pd.DataFrame(index=sample_names, columns=basenji_features_df["ID"])
 
-    # read in predictions and get prediction at SNP bin for GM12878 features
-    for sample_file in sample_files:
-        with h5py.File(sample_file, "r") as gene_h5:
-            basenji_preds = gene_h5["all_preds"]
-            if args.extract_tss:
-                bin = get_snp_bin(snp_pos=row["bp"], tss_pos=row["bp"], strand=row["strand"], model="basenji")  # set snp_pos to tss_pos to get TSS preds
-            else:
-                bin = get_snp_bin(snp_pos=row["SNPpos"], tss_pos=row["TSSpos_x"], strand=row["strand"], model="basenji")
-            basenji_gm12878_preds = basenji_preds[bin, np.array(basenji_features_df.index)]
+        # read in predictions and get prediction at SNP bin for GM12878 features
+        for sample_file in sample_files:
+            with h5py.File(sample_file, "r") as gene_h5:
+                basenji_preds = gene_h5["all_preds"]
+                if args.extract_mode == "tss":
+                    bin = get_snp_bin(snp_pos=row["bp"], tss_pos=row["bp"], strand=row["strand"], model="basenji")  # set snp_pos to tss_pos to get TSS preds
+                else:
+                    bin = get_snp_bin(snp_pos=row["SNPpos"], tss_pos=row["TSSpos_x"], strand=row["strand"], model="basenji")
+                basenji_gm12878_preds = basenji_preds[bin, np.array(basenji_features_df.index)]
 
-            # store preds
-            basenji_preds_df.loc[Path(sample_file).stem, :] = basenji_gm12878_preds
+                # store preds
+                basenji_preds_df.loc[Path(sample_file).stem, :] = basenji_gm12878_preds
 
-    # save to CSV
-    if basenji_preds_df.isna().any().any():
-        print(f"WARNING: NaNs found in basenji_gene_df for {gene}")
-    basenji_preds_df.to_csv(f"{preds_out_dir}/basenji_preds.csv")
+        # save to CSV
+        if basenji_preds_df.isna().any().any():
+            print(f"WARNING: NaNs found in basenji_gene_df for {gene}")
+        basenji_preds_df.to_csv(f"{preds_out_dir}/basenji_preds.csv")
+    else:
+        # Extract 50 bins symmetrically from TSS and save as h5
+        bin = get_snp_bin(snp_pos=row["bp"], tss_pos=row["bp"], strand=row["strand"], model="basenji")  # set snp_pos to tss_pos to get TSS preds
+
+        # initialize empty array to store preds
+        num_samples = len(sample_files)
+        num_features = len(basenji_features_df["ID"])
+        all_preds = np.empty((num_samples, 101, num_features), dtype=np.float16)  # 101 bins centered at TSS
+
+        for i, sample_file in enumerate(sample_files):
+            with h5py.File(sample_file, "r") as gene_h5:
+                basenji_preds = gene_h5["all_preds"]
+                all_preds[i] = basenji_preds[bin - 50:bin + 51, np.array(basenji_features_df.index)]
+
+        # Save the 3D array as an h5 file
+        with h5py.File(f"{preds_out_dir}/gm12878_preds.h5", "w") as f:
+            f.create_dataset("all_preds", data=all_preds, compression="gzip", compression_opts=9)
+            f.create_dataset("sample_names", data=np.array(sample_names, dtype="S"))
+            f.create_dataset("features", data=np.array(basenji_features_df.index))
 
 
 def get_snp_bin(snp_pos: int, tss_pos: int, strand: str, model: str) -> int:
