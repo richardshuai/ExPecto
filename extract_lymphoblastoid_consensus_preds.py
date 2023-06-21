@@ -105,7 +105,7 @@ def main():
                     target_bin = get_snp_bin(row["bp"], row["bp"], row["strand"], model="expecto")  # extract tss bin by setting snp pos to tss pos
 
                     # extract 50 bins symetrically from TSS
-                    with h5py.File(f"{preds_out_dir}/gm12878_preds.h5", "w") as h5f:
+                    with h5py.File(f"{preds_out_dir}/expecto_gm12878_preds.h5", "w") as h5f:
                         expecto_gm12878_preds = expecto_preds[:, target_bin - 50:target_bin + 51, np.array(expecto_gm12878.index)].astype(np.float16)
 
                         # save the data
@@ -174,7 +174,7 @@ def process_eqtl_basenji(index_row: tuple, args: argparse.Namespace, basenji_fea
                 all_preds[i] = basenji_preds[bin - 50:bin + 51, np.array(basenji_features_df.index)]
 
         # Save the 3D array as an h5 file
-        with h5py.File(f"{preds_out_dir}/gm12878_preds.h5", "w") as f:
+        with h5py.File(f"{preds_out_dir}/basenji_gm12878_preds.h5", "w") as f:
             f.create_dataset("all_preds", data=all_preds, compression="gzip", compression_opts=9)
             f.create_dataset("sample_names", data=np.array(sample_names, dtype="S"))
             f.create_dataset("features", data=np.array(basenji_features_df.index))
