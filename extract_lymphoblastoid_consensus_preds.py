@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--beluga_features_tsv", type=str, required=True, help="TSV file containing beluga features")
     parser.add_argument('--eqtls_csv', type=str, required=True, help="CSV file containing top eqtls")
     parser.add_argument('--genes_csv', type=str, required=True, help="CSV file containing all genes")
+    parser.add_argument('--subset_genes_txt', type=str, default=None, help="Subset to genes in this file (for extract_mode != snp)")
     parser.add_argument("--extract_mode", type=str, default="snp", help="Extract predictions at SNP bin, TSS bin, or 50 bins symmetrically from TSS", choices=["snp", "tss", "50_bins"])
     parser.add_argument('--model', type=str, required=True, help="Model name to extract for", choices=["basenji", "expecto"])
     parser.add_argument("--out_dir", type=str, required=True)
@@ -50,6 +51,13 @@ def main():
     genes_df = pd.read_csv(args.genes_csv, names=['ens_id', 'chrom', 'bp', 'gene_symbol', 'strand'], index_col=False)
     genes_df['name'] = genes_df['gene_symbol'].fillna(genes_df['ens_id']).str.lower()
     genes_df = genes_df.set_index('name')
+
+    # subset to genes in subset_genes_txt
+    if args.subset_genes_txt is not None:
+        subset_genes_df = pd.read_csv(args.subset_genes_txt)
+        subset_genes_df["name"] = subset_genes_df['name'].fillna(subset_genes_df['geneID']).str.lower()
+        subset_genes = set(subset_genes_df["name"])
+        genes_df = genes_df[genes_df.index.isin(subset_genes)]
 
     eqtls_df["strand"] = pd.merge(eqtls_df, genes_df, left_index=True, right_index=True, how="left")["strand"]
     assert set(eqtls_df["strand"]).issubset({"+", "-"}), f"Strand not found for all eqtls"
