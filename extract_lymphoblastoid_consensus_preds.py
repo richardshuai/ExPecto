@@ -45,7 +45,6 @@ def main():
 
     # read in eqtls
     eqtls_df = pd.read_csv(args.eqtls_csv, index_col=0).set_index("name")
-    eqtls_df = eqtls_df
 
     # get strand
     genes_df = pd.read_csv(args.genes_csv, names=['ens_id', 'chrom', 'bp', 'gene_symbol', 'strand'], index_col=False)
@@ -59,8 +58,9 @@ def main():
         subset_genes = set(subset_genes_df["name"])
         genes_df = genes_df[genes_df.index.isin(subset_genes)]
 
-    eqtls_df["strand"] = pd.merge(eqtls_df, genes_df, left_index=True, right_index=True, how="left")["strand"]
-    assert set(eqtls_df["strand"]).issubset({"+", "-"}), f"Strand not found for all eqtls"
+    if args.extract_mode == "snp":
+        eqtls_df["strand"] = pd.merge(eqtls_df, genes_df, left_index=True, right_index=True, how="left")["strand"]
+        assert set(eqtls_df["strand"]).issubset({"+", "-"}), f"Strand not found for all eqtls"
 
     # read in predictions for each eqtl
     if args.model == "basenji":
