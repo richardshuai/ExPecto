@@ -69,8 +69,6 @@ def main():
         df = genes_df if args.extract_mode != "snp" else eqtls_df
         for i, row in tqdm(df.iterrows(), total=df.shape[0]):
             gene = row.name
-            if gene not in ["snhg5", "flvcr1-dt", "rps26", "slfn5", "pex6"]:
-                continue
 
             if args.extract_mode == "snp":
                 # Extract preds at SNP per gene-SNP pair
